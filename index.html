@@ -240,11 +240,11 @@ function App() {
     setHydrated(true);
   }, [fsData, hydrated]);
 
-  // Wrapped setters that also save to Firestore
+  // Wrapped setters that also save to Firestore — plain functions, no hooks inside
   const timers = useRef({});
-  function makeSetter(raw, fieldName) {
-    return useCallback((updater) => {
-      raw(prev => {
+  function makeSetter(rawSetter, fieldName) {
+    return (updater) => {
+      rawSetter(prev => {
         const next = typeof updater === "function" ? updater(prev) : updater;
         clearTimeout(timers.current[fieldName]);
         timers.current[fieldName] = setTimeout(() => saveField(fieldName, next), 800);
@@ -252,7 +252,7 @@ function App() {
         setTimeout(() => setSaveFlash(false), 1800);
         return next;
       });
-    }, [raw, fieldName]);
+    };
   }
 
   const setDailyWeeks  = makeSetter(setDailyWeeksRaw,  "dailyWeeks");
