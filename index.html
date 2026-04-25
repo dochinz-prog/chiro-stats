@@ -7,19 +7,19 @@
 </head>
 <body style="margin:0;padding:0;background:#0f1117;">
   <div id="root"></div>
- 
+
   <!-- React + Babel + Firebase compat CDN -->
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
- 
+
   <!-- Firebase compat -->
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
- 
+
   <script type="text/babel" data-presets="react">
     const { useState, useMemo, useCallback, useEffect, useRef } = React;
- 
+
     // Firebase setup using compat SDK
     const firebaseConfig = {
       apiKey: "AIzaSyBDFXvDT8gbadUob5aH8d68ZcMShsWt_EE",
@@ -29,75 +29,35 @@
       messagingSenderId: "602082979448",
       appId: "1:602082979448:web:2f524c8689d49b0803878d",
     };
- 
+
     const fbApp = firebase.initializeApp(firebaseConfig);
     const db = fbApp.firestore();
     const DOC_ID = "2026";
- 
+
     function sanitise(val) {
       return JSON.parse(JSON.stringify(val, (k, v) => v instanceof Date ? v.toISOString() : v));
     }
- 
-    // Shared doc cache
-    let _docCache = null;
-    let _docListeners = [];
-    let _docLoaded = false;
- 
-    function _loadDoc() {
-      if (_docLoaded) return;
-      _docLoaded = true;
-      db.collection("chiro2026").doc(DOC_ID).get().then(snap => {
-        _docCache = snap.exists ? snap.data() : {};
-        _docListeners.forEach(fn => fn(_docCache));
-        _docListeners = [];
-      }).catch(() => {
-        _docCache = {};
-        _docListeners.forEach(fn => fn(_docCache));
-        _docListeners = [];
-      });
+
+    function saveField(fieldName, val) {
+      try {
+        db.collection("chiro2026").doc(DOC_ID).set({ [fieldName]: sanitise(val) }, { merge: true });
+      } catch(e) { console.error("Save error", e); }
     }
- 
-    function usePersisted(fieldName, init) {
-      const defaultVal = useRef(typeof init === "function" ? init() : init);
-      const [val, setValRaw] = useState(defaultVal.current);
-      const [ready, setReady] = useState(false);
-      const timer = useRef(null);
- 
+
+    // Single hook that loads ALL data at once — no conditional hooks
+    function useFirestore() {
+      const [data, setData] = useState(null); // null = loading
       useEffect(() => {
-        _loadDoc();
-        let cancelled = false;
-        if (_docCache !== null) {
-          if (_docCache[fieldName] !== undefined) setValRaw(_docCache[fieldName]);
-          setReady(true);
-        } else {
-          _docListeners.push((data) => {
-            if (cancelled) return;
-            if (data[fieldName] !== undefined) setValRaw(data[fieldName]);
-            setReady(true);
-          });
-        }
-        return () => { cancelled = true; };
+        db.collection("chiro2026").doc(DOC_ID).get()
+          .then(snap => setData(snap.exists ? snap.data() : {}))
+          .catch(() => setData({}));
       }, []);
- 
-      const set = useCallback((updater) => {
-        setValRaw(prev => {
-          const next = typeof updater === "function" ? updater(prev) : updater;
-          clearTimeout(timer.current);
-          timer.current = setTimeout(() => {
-            try {
-              db.collection("chiro2026").doc(DOC_ID).set({ [fieldName]: sanitise(next) }, { merge: true });
-            } catch {}
-          }, 800);
-          return next;
-        });
-      }, [fieldName]);
- 
-      return [val, set, ready];
+      return data;
     }
- 
- 
- 
- 
+
+
+
+
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const MONTHS = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
 const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
@@ -110,7 +70,7 @@ const PAYMENT_TYPES_LIFETIME = ["PIF","Auto Pay","PPT"];
 const NP_TYPES = ["Chiropractic","Decompression","Softwave"];
 const DOCS = ["Dr.H","Dr.A"];
 const BONUS_BASELINE = 80000;
- 
+
 function pct(num, denom) {
   if (!denom || denom === 0) return null;
   return (num / denom) * 100;
@@ -127,7 +87,7 @@ function fmtPct(n) {
   if (n === null || n === undefined || isNaN(n)) return "—";
   return Number(n).toFixed(1) + "%";
 }
- 
+
 // Generate 2026 business days
 function gen2026Days() {
   const weeks = [];
@@ -164,7 +124,7 @@ function gen2026Days() {
   }
   return weeks;
 }
- 
+
 function initMonthlyNP() {
   return MONTHS.map((m, mi) => ({
     month: m,
@@ -174,7 +134,7 @@ function initMonthlyNP() {
     referOut: 0,
   }));
 }
- 
+
 function emptyPatient(fileNum) {
   return {
     id: crypto.randomUUID(),
@@ -193,14 +153,14 @@ function emptyPatient(fileNum) {
     lifetimeTxPlan: "", lifetimePayment: "",
   };
 }
- 
+
 function initMarketing() {
   return {
     fb: MONTHS.map(m => ({ month: m, spend: 0, collected: 0, leads: 0, np: 0, d2: 0, closes: 0 })),
     google: MONTHS.map(m => ({ month: m, spend: 0, collected: 0, leads: 0, np: 0, d2: 0, closes: 0 })),
   };
 }
- 
+
 function initBusinessReview() {
   return MONTHS.map(m => ({
     month: m,
@@ -210,7 +170,7 @@ function initBusinessReview() {
     monthlyAutoPays: 0, goal: 0,
   }));
 }
- 
+
 function initBonuses() {
   return {
     baseline: BONUS_BASELINE,
@@ -219,7 +179,7 @@ function initBonuses() {
     refunds: MONTHS.map(m => ({ month: m, total: 0, note: "" })),
   };
 }
- 
+
 function initFD() {
   return gen2026Days().map(w => ({
     ...w,
@@ -229,11 +189,11 @@ function initFD() {
     }))
   }));
 }
- 
+
 function initSupplements() {
   return MONTHS.map((m, i) => ({ month: m, supplements: 0, salesTax: 0 }));
 }
- 
+
 const EVEREST_HISTORY = [
   { year: 2022, pv:13772,np:488,ma:1546,rs:1599,services:87453,checks:4006.6,cash:9813,cc:709157.39,ins:96860.8,pi:20693.05,collections:840530.84 },
   { year: 2021, pv:14268,np:538,ma:1798,rs:1226,services:1018689,checks:4196,cash:6878,cc:668651.64,ins:129545.44,pi:41651.7,collections:850922.78 },
@@ -246,46 +206,79 @@ const EVEREST_HISTORY = [
   { year: 2014, pv:10252,np:381,ma:1970,rs:1010,services:738387.7,checks:19575.41,cash:11764.55,cc:277426.55,ins:170086.83,pi:0,collections:481128.9 },
   { year: 2013, pv:7292,np:323,ma:1146,rs:547,services:473002,checks:18856.17,cash:7671.65,cc:160940.81,ins:117402.23,pi:0,collections:304870.86 },
 ];
- 
+
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 function App() {
+  const fsData = useFirestore(); // null while loading
   const [tab, setTab] = useState("dashboard");
-  const [dailyWeeks, setDailyWeeks, r0] = usePersisted("dailyWeeks", gen2026Days);
-  const [monthlyNP,  setMonthlyNP,  r1] = usePersisted("monthlyNP",  initMonthlyNP);
-  const [marketing,  setMarketing,  r2] = usePersisted("marketing",  initMarketing);
-  const [bizReview,  setBizReview,  r3] = usePersisted("bizReview",  initBusinessReview);
-  const [bonuses,    setBonuses,    r4] = usePersisted("bonuses",    initBonuses);
-  const [fdWeeks,    setFdWeeks,    r5] = usePersisted("fdWeeks",    initFD);
-  const [supplements,setSupplements,r6] = usePersisted("supplements",initSupplements);
-  const [everest2026,setEverest2026,r7] = usePersisted("everest2026",{ pv:0,np:0,ma:0,rs:0,services:0,checks:0,cash:0,cc:0,ins:0,pi:0,collections:0 });
-  const [npMonth,    setNpMonth,    r8] = usePersisted("npMonth",    0);
   const [saveFlash, setSaveFlash] = useState(false);
- 
-  const allReady = r0 && r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8;
- 
-  // Flash "Saved" indicator whenever any persisted state changes (after initial load)
-  const firstRender = useRef(true);
+
+  // All state initialized from Firestore once loaded
+  const [dailyWeeks, setDailyWeeksRaw] = useState(gen2026Days);
+  const [monthlyNP,  setMonthlyNPRaw]  = useState(initMonthlyNP);
+  const [marketing,  setMarketingRaw]  = useState(initMarketing);
+  const [bizReview,  setBizReviewRaw]  = useState(initBusinessReview);
+  const [bonuses,    setBonusesRaw]    = useState(initBonuses);
+  const [fdWeeks,    setFdWeeksRaw]    = useState(initFD);
+  const [supplements,setSupplementsRaw]= useState(initSupplements);
+  const [everest2026,setEverest2026Raw]= useState({ pv:0,np:0,ma:0,rs:0,services:0,checks:0,cash:0,cc:0,ins:0,pi:0,collections:0 });
+  const [npMonth,    setNpMonthRaw]    = useState(0);
+  const [hydrated,   setHydrated]      = useState(false);
+
+  // Hydrate state from Firestore once
   useEffect(() => {
-    if (firstRender.current) { firstRender.current = false; return; }
-    setSaveFlash(true);
-    const t = setTimeout(() => setSaveFlash(false), 1800);
-    return () => clearTimeout(t);
-  }, [dailyWeeks, monthlyNP, marketing, bizReview, bonuses, fdWeeks, supplements, everest2026, npMonth]);
- 
+    if (fsData === null || hydrated) return;
+    if (fsData.dailyWeeks)  setDailyWeeksRaw(fsData.dailyWeeks);
+    if (fsData.monthlyNP)   setMonthlyNPRaw(fsData.monthlyNP);
+    if (fsData.marketing)   setMarketingRaw(fsData.marketing);
+    if (fsData.bizReview)   setBizReviewRaw(fsData.bizReview);
+    if (fsData.bonuses)     setBonusesRaw(fsData.bonuses);
+    if (fsData.fdWeeks)     setFdWeeksRaw(fsData.fdWeeks);
+    if (fsData.supplements) setSupplementsRaw(fsData.supplements);
+    if (fsData.everest2026) setEverest2026Raw(fsData.everest2026);
+    if (fsData.npMonth !== undefined) setNpMonthRaw(fsData.npMonth);
+    setHydrated(true);
+  }, [fsData, hydrated]);
+
+  // Wrapped setters that also save to Firestore
+  const timers = useRef({});
+  function makeSetter(raw, fieldName) {
+    return useCallback((updater) => {
+      raw(prev => {
+        const next = typeof updater === "function" ? updater(prev) : updater;
+        clearTimeout(timers.current[fieldName]);
+        timers.current[fieldName] = setTimeout(() => saveField(fieldName, next), 800);
+        setSaveFlash(true);
+        setTimeout(() => setSaveFlash(false), 1800);
+        return next;
+      });
+    }, [raw, fieldName]);
+  }
+
+  const setDailyWeeks  = makeSetter(setDailyWeeksRaw,  "dailyWeeks");
+  const setMonthlyNP   = makeSetter(setMonthlyNPRaw,   "monthlyNP");
+  const setMarketing   = makeSetter(setMarketingRaw,   "marketing");
+  const setBizReview   = makeSetter(setBizReviewRaw,   "bizReview");
+  const setBonuses     = makeSetter(setBonusesRaw,     "bonuses");
+  const setFdWeeks     = makeSetter(setFdWeeksRaw,     "fdWeeks");
+  const setSupplements = makeSetter(setSupplementsRaw, "supplements");
+  const setEverest2026 = makeSetter(setEverest2026Raw, "everest2026");
+  const setNpMonth     = makeSetter(setNpMonthRaw,     "npMonth");
+
   const handleReset = () => {
     if (!window.confirm("Reset ALL data to blank? This cannot be undone.")) return;
-    setDoc(doc(db, "chiro2026", DOC_ID), {}).then(() => window.location.reload());
+    db.collection("chiro2026").doc(DOC_ID).set({}).then(() => window.location.reload());
   };
- 
+
   // Show loading screen while Firestore loads
-  if (!allReady) return (
+  if (fsData === null) return (
     <div style={{ fontFamily: "'DM Sans', sans-serif", background: "#0f1117", minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, color: "#e8eaf0" }}>
       <div style={{ width: 40, height: 40, border: "3px solid #2e3247", borderTop: "3px solid #4f8ef7", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       <p style={{ color: "#8891aa", fontSize: 14 }}>Connecting to Firestore…</p>
     </div>
   );
- 
+
   // ── Derived: monthly totals from daily sheet
   const monthlyTotals = useMemo(() => {
     const totals = MONTHS.map(() => ({ pv:0,np:0,mnp:0,ma:0,rs:0,wi:0,services:0,checks:0,cash:0,cc:0,ins:0,pi:0,collections:0,supplements:0,scheduled:0 }));
@@ -311,14 +304,14 @@ function App() {
     }));
     return totals;
   }, [dailyWeeks]);
- 
+
   const yearTotals = useMemo(() => {
     return monthlyTotals.reduce((acc, m) => {
       Object.keys(acc).forEach(k => { acc[k] += m[k]; });
       return acc;
     }, { pv:0,np:0,mnp:0,ma:0,rs:0,wi:0,services:0,checks:0,cash:0,cc:0,ins:0,pi:0,collections:0,supplements:0,scheduled:0 });
   }, [monthlyTotals]);
- 
+
   // ── Derived: NP monthly stats
   const npStats = useMemo(() => {
     return monthlyNP.map(mo => {
@@ -352,7 +345,7 @@ function App() {
       return { totalNP, d1, d2, activeClose, wellnessClose, lifetimeClose, drH: drH.length, drA: drA.length, sourceCounts, insCounts, npTypes, inactives: mo.monthlyInactives || 0, referOut: mo.referOut || 0 };
     });
   }, [monthlyNP]);
- 
+
   const tabs = [
     { id: "dashboard", label: "Dashboard", icon: "⬡" },
     { id: "daily", label: "Daily Log", icon: "📅" },
@@ -365,7 +358,7 @@ function App() {
     { id: "supplements", label: "Supplements", icon: "💊" },
     { id: "everest", label: "Everest Stats", icon: "🏆" },
   ];
- 
+
   return (
     <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif", background: "#0f1117", minHeight: "100vh", color: "#e8eaf0" }}>
       <style>{`
@@ -405,7 +398,7 @@ function App() {
         .badge-amber { background: #451a03; color: #fbbf24; }
         .np-section-header { background: #1a1d27; color: #8891aa; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; padding: 4px 8px; }
       `}</style>
- 
+
       {/* Top nav */}
       <div style={{ background: "#0d0f18", borderBottom: "1px solid #1e2130", padding: "0 24px", display: "flex", alignItems: "center", gap: 0, overflowX: "auto" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginRight: 32, flexShrink: 0 }}>
@@ -426,7 +419,7 @@ function App() {
           </button>
         </div>
       </div>
- 
+
       <div style={{ padding: "28px 28px", maxWidth: 1600, margin: "0 auto" }}>
         {tab === "dashboard" && <Dashboard yearTotals={yearTotals} monthlyTotals={monthlyTotals} npStats={npStats} monthlyNP={monthlyNP} bonuses={bonuses} bizReview={bizReview} marketing={marketing} />}
         {tab === "daily" && <DailyLog dailyWeeks={dailyWeeks} setDailyWeeks={setDailyWeeks} monthlyTotals={monthlyTotals} yearTotals={yearTotals} />}
@@ -442,7 +435,7 @@ function App() {
     </div>
   );
 }
- 
+
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
 function Dashboard({ yearTotals, monthlyTotals, npStats, monthlyNP, bonuses, bizReview, marketing }) {
   const totalNP = npStats.reduce((s, m) => s + m.totalNP, 0);
@@ -455,7 +448,7 @@ function Dashboard({ yearTotals, monthlyTotals, npStats, monthlyNP, bonuses, biz
   const curNP = npStats[currentMonth] || npStats[0];
   const totalInactives = npStats.reduce((s, m) => s + m.inactives, 0);
   const netMomentum = totalCloses - totalInactives;
- 
+
   const kpis = [
     { label: "YTD Collections", value: fmtDollar(yearTotals.collections), sub: `${MONTHS[currentMonth]} ${fmtDollar(curMo.collections)}`, color: "#4f8ef7" },
     { label: "YTD Patient Visits", value: fmt(yearTotals.pv), sub: `OVA ${fmtDollar(ova)}`, color: "#a78bfa" },
@@ -466,7 +459,7 @@ function Dashboard({ yearTotals, monthlyTotals, npStats, monthlyNP, bonuses, biz
     { label: "YTD Services", value: fmtDollar(yearTotals.services), sub: `Supplements ${fmtDollar(yearTotals.supplements)}`, color: "#fb923c" },
     { label: "Total PV", value: fmt(yearTotals.pv), sub: `NP ${fmt(yearTotals.np)} | RS ${fmt(yearTotals.rs)} | WI ${fmt(yearTotals.wi)}`, color: "#e879f9" },
   ];
- 
+
   return (
     <div>
       <div style={{ marginBottom: 28 }}>
@@ -482,7 +475,7 @@ function Dashboard({ yearTotals, monthlyTotals, npStats, monthlyNP, bonuses, biz
           </div>
         ))}
       </div>
- 
+
       {/* Monthly collections bar */}
       <div className="kpi-card" style={{ marginBottom: 20 }}>
         <div className="section-header">Monthly Collections Trend</div>
@@ -499,7 +492,7 @@ function Dashboard({ yearTotals, monthlyTotals, npStats, monthlyNP, bonuses, biz
           })}
         </div>
       </div>
- 
+
       {/* Monthly NP bar */}
       <div className="kpi-card" style={{ marginBottom: 20 }}>
         <div className="section-header">Monthly New Patients</div>
@@ -516,7 +509,7 @@ function Dashboard({ yearTotals, monthlyTotals, npStats, monthlyNP, bonuses, biz
           })}
         </div>
       </div>
- 
+
       {/* Payment mix */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <div className="kpi-card">
@@ -560,12 +553,12 @@ function Dashboard({ yearTotals, monthlyTotals, npStats, monthlyNP, bonuses, biz
     </div>
   );
 }
- 
+
 // ─── DAILY LOG ────────────────────────────────────────────────────────────────
 function DailyLog({ dailyWeeks, setDailyWeeks, monthlyTotals, yearTotals }) {
   const [openWeeks, setOpenWeeks] = useState(() => new Set([0]));
   const [filterMonth, setFilterMonth] = useState("all");
- 
+
   const updateDay = useCallback((wi, di, field, val) => {
     setDailyWeeks(prev => {
       const next = prev.map((w, i) => i !== wi ? w : {
@@ -574,15 +567,15 @@ function DailyLog({ dailyWeeks, setDailyWeeks, monthlyTotals, yearTotals }) {
       return next;
     });
   }, [setDailyWeeks]);
- 
+
   const weekTotal = (days, field) => days.reduce((s, d) => s + (Number(d[field]) || 0), 0);
   const collections = d => (Number(d.checks)||0)+(Number(d.cash)||0)+(Number(d.cc)||0)+(Number(d.ins)||0)+(Number(d.pi)||0);
- 
+
   const cols = ["scheduled","pv","np","mnp","ma","rs","wi","services","checks","cash","cc","ins","pi","collections","supplements"];
   const colLabels = ["Sched","PV","NP","MNP","MA","RS","WI","Services","Checks","Cash","CC","Ins","PI","Collections","Suppl"];
- 
+
   const filteredWeeks = filterMonth === "all" ? dailyWeeks : dailyWeeks.filter(w => w.days.some(d => d.month === Number(filterMonth)));
- 
+
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
@@ -597,7 +590,7 @@ function DailyLog({ dailyWeeks, setDailyWeeks, monthlyTotals, yearTotals }) {
           </select>
         </div>
       </div>
- 
+
       {/* Year totals */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 10, marginBottom: 24 }}>
         {["collections","pv","np","services","checks","cash","cc","ins","pi"].map(k => (
@@ -609,7 +602,7 @@ function DailyLog({ dailyWeeks, setDailyWeeks, monthlyTotals, yearTotals }) {
           </div>
         ))}
       </div>
- 
+
       {filteredWeeks.map((week, wi) => {
         const realWi = dailyWeeks.indexOf(week);
         const isOpen = openWeeks.has(realWi);
@@ -667,7 +660,7 @@ function DailyLog({ dailyWeeks, setDailyWeeks, monthlyTotals, yearTotals }) {
           </div>
         );
       })}
- 
+
       {/* Monthly summary */}
       <div style={{ marginTop: 28 }}>
         <div className="section-header">Monthly Summary</div>
@@ -736,12 +729,12 @@ function DailyLog({ dailyWeeks, setDailyWeeks, monthlyTotals, yearTotals }) {
     </div>
   );
 }
- 
+
 // ─── NEW PATIENTS ─────────────────────────────────────────────────────────────
 function NewPatients({ monthlyNP, setMonthlyNP, npStats, npMonth, setNpMonth }) {
   const mo = monthlyNP[npMonth];
   const stats = npStats[npMonth];
- 
+
   const addPatient = () => {
     setMonthlyNP(prev => prev.map((m, i) => i !== npMonth ? m : {
       ...m,
@@ -749,23 +742,23 @@ function NewPatients({ monthlyNP, setMonthlyNP, npStats, npMonth, setNpMonth }) 
       nextFile: m.nextFile + 1,
     }));
   };
- 
+
   const deletePatient = (pid) => {
     setMonthlyNP(prev => prev.map((m, i) => i !== npMonth ? m : {
       ...m, patients: m.patients.filter(p => p.id !== pid)
     }));
   };
- 
+
   const updatePatient = (pid, field, val) => {
     setMonthlyNP(prev => prev.map((m, i) => i !== npMonth ? m : {
       ...m, patients: m.patients.map(p => p.id !== pid ? p : { ...p, [field]: val })
     }));
   };
- 
+
   const updateMeta = (field, val) => {
     setMonthlyNP(prev => prev.map((m, i) => i !== npMonth ? m : { ...m, [field]: val }));
   };
- 
+
   const TagSelect = ({ value, onChange }) => (
     <select value={value} onChange={e => onChange(e.target.value)} style={{ width: 60 }}>
       <option value="">—</option>
@@ -774,7 +767,7 @@ function NewPatients({ monthlyNP, setMonthlyNP, npStats, npMonth, setNpMonth }) 
       <option value="R">R</option>
     </select>
   );
- 
+
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
@@ -789,7 +782,7 @@ function NewPatients({ monthlyNP, setMonthlyNP, npStats, npMonth, setNpMonth }) 
           <button className="btn btn-primary" onClick={addPatient}>+ Add Patient</button>
         </div>
       </div>
- 
+
       {/* Stats panel */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 12, marginBottom: 24 }}>
         {[
@@ -808,7 +801,7 @@ function NewPatients({ monthlyNP, setMonthlyNP, npStats, npMonth, setNpMonth }) 
           </div>
         ))}
       </div>
- 
+
       {/* Patient table */}
       <div className="table-wrap" style={{ marginBottom: 24 }}>
         <table>
@@ -914,7 +907,7 @@ function NewPatients({ monthlyNP, setMonthlyNP, npStats, npMonth, setNpMonth }) 
           </tbody>
         </table>
       </div>
- 
+
       {/* Summary panels */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
         {/* Source breakdown */}
@@ -988,13 +981,13 @@ function NewPatients({ monthlyNP, setMonthlyNP, npStats, npMonth, setNpMonth }) 
     </div>
   );
 }
- 
+
 // ─── YEAR END ─────────────────────────────────────────────────────────────────
 function YearEnd({ monthlyTotals, yearTotals, supplements }) {
   const quarters = [[0,1,2],[3,4,5],[6,7,8],[9,10,11]];
   const suppTotal = supplements.reduce((s, m) => s + (Number(m.supplements)||0), 0);
   const suppTaxTotal = supplements.reduce((s, m) => s + (Number(m.salesTax)||0), 0);
- 
+
   return (
     <div>
       <div style={{ marginBottom: 20 }}>
@@ -1045,13 +1038,13 @@ function YearEnd({ monthlyTotals, yearTotals, supplements }) {
     </div>
   );
 }
- 
+
 // ─── BUSINESS REVIEW ──────────────────────────────────────────────────────────
 function BusinessReview({ bizReview, setBizReview, monthlyTotals, npStats }) {
   const update = (i, field, val) => {
     setBizReview(prev => prev.map((m, j) => j !== i ? m : { ...m, [field]: val }));
   };
- 
+
   const rows = [
     { key: "collections", label: "Collections ($)", type: "dollar", auto: (i) => monthlyTotals[i].collections },
     { key: "adjustments", label: "Adjustments ($)", type: "dollar" },
@@ -1076,7 +1069,7 @@ function BusinessReview({ bizReview, setBizReview, monthlyTotals, npStats }) {
     { key: "monthlyAutoPays", label: "Monthly Auto Pays", type: "int" },
     { key: "goal", label: "Monthly Goal ($)", type: "dollar" },
   ];
- 
+
   return (
     <div>
       <div style={{ marginBottom: 20 }}>
@@ -1126,7 +1119,7 @@ function BusinessReview({ bizReview, setBizReview, monthlyTotals, npStats }) {
     </div>
   );
 }
- 
+
 // ─── MARKETING ────────────────────────────────────────────────────────────────
 function Marketing({ marketing, setMarketing }) {
   const updateChannel = (channel, i, field, val) => {
@@ -1135,7 +1128,7 @@ function Marketing({ marketing, setMarketing }) {
       [channel]: prev[channel].map((m, j) => j !== i ? m : { ...m, [field]: val })
     }));
   };
- 
+
   const MarketingTable = ({ channel, label }) => {
     const data = marketing[channel];
     const totals = data.reduce((acc, m) => {
@@ -1198,7 +1191,7 @@ function Marketing({ marketing, setMarketing }) {
       </div>
     );
   };
- 
+
   return (
     <div>
       <div style={{ marginBottom: 20 }}>
@@ -1210,18 +1203,18 @@ function Marketing({ marketing, setMarketing }) {
     </div>
   );
 }
- 
+
 // ─── BONUSES ──────────────────────────────────────────────────────────────────
 function Bonuses({ bonuses, setBonuses, monthlyTotals }) {
   const updateBaseline = (val) => setBonuses(prev => ({ ...prev, baseline: Number(val) }));
   const updateTeam = (i, val) => setBonuses(prev => ({ ...prev, team: prev.team.map((m, j) => j !== i ? m : { ...m, collections: Number(val) }) }));
   const updateDocs = (i, val) => setBonuses(prev => ({ ...prev, docs: prev.docs.map((m, j) => j !== i ? m : { ...m, collections: Number(val) }) }));
   const updateRefund = (i, field, val) => setBonuses(prev => ({ ...prev, refunds: prev.refunds.map((m, j) => j !== i ? m : { ...m, [field]: val }) }));
- 
+
   const b = bonuses;
   const teamBonus = (coll) => coll - b.baseline;
   const teamShare = (coll) => teamBonus(coll) / 3;
- 
+
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
@@ -1234,7 +1227,7 @@ function Bonuses({ bonuses, setBonuses, monthlyTotals }) {
           <input type="number" value={b.baseline} onChange={e => updateBaseline(e.target.value)} style={{ width: 110 }} />
         </div>
       </div>
- 
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 24 }}>
         {/* Team Bonuses */}
         <div className="kpi-card">
@@ -1269,7 +1262,7 @@ function Bonuses({ bonuses, setBonuses, monthlyTotals }) {
             </tbody>
           </table>
         </div>
- 
+
         {/* Docs Bonuses */}
         <div className="kpi-card">
           <div className="section-header">Doctors Bonuses</div>
@@ -1301,7 +1294,7 @@ function Bonuses({ bonuses, setBonuses, monthlyTotals }) {
           </table>
         </div>
       </div>
- 
+
       {/* Refunds */}
       <div className="kpi-card">
         <div className="section-header">Refunds</div>
@@ -1321,24 +1314,24 @@ function Bonuses({ bonuses, setBonuses, monthlyTotals }) {
     </div>
   );
 }
- 
+
 // ─── FRONT DESK ───────────────────────────────────────────────────────────────
 function FrontDesk({ fdWeeks, setFdWeeks }) {
   const GOALS = { maPct: 0.05, rsPct: 1.0, wiPct: 0.10, keptPct: 0.88 };
   const [openWeeks, setOpenWeeks] = useState(() => new Set([0]));
- 
+
   const updateDay = useCallback((wi, di, field, val) => {
     setFdWeeks(prev => prev.map((w, i) => i !== wi ? w : {
       ...w, days: w.days.map((d, j) => j !== di ? d : { ...d, [field]: val })
     }));
   }, [setFdWeeks]);
- 
+
   const GIndicator = ({ val, goal, invert = false }) => {
     if (val === null || isNaN(val)) return <span style={{ color: "#8891aa" }}>—</span>;
     const good = invert ? val <= goal : val >= goal;
     return <span style={{ color: good ? "#34d399" : "#f87171" }}>{fmtPct(val * 100)}</span>;
   };
- 
+
   return (
     <div>
       <div style={{ marginBottom: 20 }}>
@@ -1421,7 +1414,7 @@ function FrontDesk({ fdWeeks, setFdWeeks }) {
     </div>
   );
 }
- 
+
 // ─── SUPPLEMENTS ──────────────────────────────────────────────────────────────
 function Supplements({ supplements, setSupplements }) {
   const update = (i, field, val) => {
@@ -1430,7 +1423,7 @@ function Supplements({ supplements, setSupplements }) {
   const quarters = [[0,1,2],[3,4,5],[6,7,8],[9,10,11]];
   const suppTotal = supplements.reduce((s, m) => s+(Number(m.supplements)||0), 0);
   const taxTotal = supplements.reduce((s, m) => s+(Number(m.salesTax)||0), 0);
- 
+
   return (
     <div>
       <div style={{ marginBottom: 20 }}>
@@ -1485,12 +1478,12 @@ function Supplements({ supplements, setSupplements }) {
     </div>
   );
 }
- 
+
 // ─── EVEREST STATS ────────────────────────────────────────────────────────────
 function EverestStats({ everest2026, setEverest2026 }) {
   const update2026 = (field, val) => setEverest2026(prev => ({ ...prev, [field]: Number(val) }));
   const allYears = [{ year: 2026, ...everest2026 }, ...EVEREST_HISTORY];
- 
+
   return (
     <div>
       <div style={{ marginBottom: 20 }}>
@@ -1537,7 +1530,7 @@ function EverestStats({ everest2026, setEverest2026 }) {
           </tbody>
         </table>
       </div>
- 
+
       {/* Historical analysis */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginTop: 24 }}>
         <div className="kpi-card">
@@ -1576,8 +1569,8 @@ function EverestStats({ everest2026, setEverest2026 }) {
     </div>
   );
 }
- 
- 
+
+
     ReactDOM.createRoot(document.getElementById("root")).render(<App />);
   </script>
 </body>
