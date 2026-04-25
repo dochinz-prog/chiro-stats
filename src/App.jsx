@@ -21,22 +21,45 @@ function sanitise(val) {
 }
 
 // ─── FIREBASE PERSISTENCE HOOK ────────────────────────────────────────────────
+// Single load: fetch the whole doc once, then individual hooks read from cache
+let _docCache = null;
+let _docLoaded = false;
+let _docListeners = [];
+
+function _loadDoc() {
+  if (_docLoaded) return;
+  _docLoaded = true;
+  getDoc(doc(db, "chiro2026", DOC_ID)).then(snap => {
+    _docCache = snap.exists() ? snap.data() : {};
+    _docListeners.forEach(fn => fn(_docCache));
+    _docListeners = [];
+  }).catch(() => {
+    _docCache = {};
+    _docListeners.forEach(fn => fn(_docCache));
+    _docListeners = [];
+  });
+}
+
 function usePersisted(fieldName, init) {
-  const defaultVal = typeof init === "function" ? init() : init;
-  const [val, setValRaw] = useState(defaultVal);
+  const defaultVal = useRef(typeof init === "function" ? init() : init);
+  const [val, setValRaw] = useState(defaultVal.current);
   const [ready, setReady] = useState(false);
   const timer = useRef(null);
 
   useEffect(() => {
+    _loadDoc();
     let cancelled = false;
-    getDoc(doc(db, "chiro2026", DOC_ID)).then(snap => {
-      if (cancelled) return;
-      if (snap.exists()) {
-        const data = snap.data();
-        if (data[fieldName] !== undefined) setValRaw(data[fieldName]);
-      }
+    if (_docCache !== null) {
+      // already loaded
+      if (_docCache[fieldName] !== undefined) setValRaw(_docCache[fieldName]);
       setReady(true);
-    }).catch(() => setReady(true));
+    } else {
+      _docListeners.push((data) => {
+        if (cancelled) return;
+        if (data[fieldName] !== undefined) setValRaw(data[fieldName]);
+        setReady(true);
+      });
+    }
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
