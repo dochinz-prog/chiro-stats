@@ -1,12 +1,1584 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ChiroStats 2026</title>
-  </head>
-  <body style="margin:0;padding:0;background:#0f1117;">
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ChiroStats 2026</title>
+</head>
+<body style="margin:0;padding:0;background:#0f1117;">
+  <div id="root"></div>
+ 
+  <!-- React + Babel + Firebase compat CDN -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+ 
+  <!-- Firebase compat -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+ 
+  <script type="text/babel" data-presets="react">
+    const { useState, useMemo, useCallback, useEffect, useRef } = React;
+ 
+    // Firebase setup using compat SDK
+    const firebaseConfig = {
+      apiKey: "AIzaSyBDFXvDT8gbadUob5aH8d68ZcMShsWt_EE",
+      authDomain: "chirostats-6c3a2.firebaseapp.com",
+      projectId: "chirostats-6c3a2",
+      storageBucket: "chirostats-6c3a2.firebasestorage.app",
+      messagingSenderId: "602082979448",
+      appId: "1:602082979448:web:2f524c8689d49b0803878d",
+    };
+ 
+    const fbApp = firebase.initializeApp(firebaseConfig);
+    const db = fbApp.firestore();
+    const DOC_ID = "2026";
+ 
+    function sanitise(val) {
+      return JSON.parse(JSON.stringify(val, (k, v) => v instanceof Date ? v.toISOString() : v));
+    }
+ 
+    // Shared doc cache
+    let _docCache = null;
+    let _docListeners = [];
+    let _docLoaded = false;
+ 
+    function _loadDoc() {
+      if (_docLoaded) return;
+      _docLoaded = true;
+      db.collection("chiro2026").doc(DOC_ID).get().then(snap => {
+        _docCache = snap.exists ? snap.data() : {};
+        _docListeners.forEach(fn => fn(_docCache));
+        _docListeners = [];
+      }).catch(() => {
+        _docCache = {};
+        _docListeners.forEach(fn => fn(_docCache));
+        _docListeners = [];
+      });
+    }
+ 
+    function usePersisted(fieldName, init) {
+      const defaultVal = useRef(typeof init === "function" ? init() : init);
+      const [val, setValRaw] = useState(defaultVal.current);
+      const [ready, setReady] = useState(false);
+      const timer = useRef(null);
+ 
+      useEffect(() => {
+        _loadDoc();
+        let cancelled = false;
+        if (_docCache !== null) {
+          if (_docCache[fieldName] !== undefined) setValRaw(_docCache[fieldName]);
+          setReady(true);
+        } else {
+          _docListeners.push((data) => {
+            if (cancelled) return;
+            if (data[fieldName] !== undefined) setValRaw(data[fieldName]);
+            setReady(true);
+          });
+        }
+        return () => { cancelled = true; };
+      }, []);
+ 
+      const set = useCallback((updater) => {
+        setValRaw(prev => {
+          const next = typeof updater === "function" ? updater(prev) : updater;
+          clearTimeout(timer.current);
+          timer.current = setTimeout(() => {
+            try {
+              db.collection("chiro2026").doc(DOC_ID).set({ [fieldName]: sanitise(next) }, { merge: true });
+            } catch {}
+          }, 800);
+          return next;
+        });
+      }, [fieldName]);
+ 
+      return [val, set, ready];
+    }
+ 
+ 
+ 
+ 
+// ─── CONSTANTS ────────────────────────────────────────────────────────────────
+const MONTHS = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
+const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const DAYS_IN_MONTH = [31,28,31,30,31,30,31,31,30,31,30,31];
+const SOURCES = ["Patient Referral","Google LSA","Facebook/Insta","Insurance Website","Walk In","Other","Reactivation","CSC Website","Provider Referral"];
+const INSURANCE_TYPES = ["Cash","BCBS","UHC","Aetna","AUTO"];
+const PAYMENT_TYPES_ACTIVE = ["PIF","Multiple Pay","PPT","AUTO"];
+const PAYMENT_TYPES_WELLNESS = ["PIF","Auto Pay","PPT"];
+const PAYMENT_TYPES_LIFETIME = ["PIF","Auto Pay","PPT"];
+const NP_TYPES = ["Chiropractic","Decompression","Softwave"];
+const DOCS = ["Dr.H","Dr.A"];
+const BONUS_BASELINE = 80000;
+ 
+function pct(num, denom) {
+  if (!denom || denom === 0) return null;
+  return (num / denom) * 100;
+}
+function fmt(n, decimals = 0) {
+  if (n === null || n === undefined || isNaN(n)) return "—";
+  return Number(n).toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+function fmtDollar(n) {
+  if (n === null || n === undefined || isNaN(n)) return "—";
+  return "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function fmtPct(n) {
+  if (n === null || n === undefined || isNaN(n)) return "—";
+  return Number(n).toFixed(1) + "%";
+}
+ 
+// Generate 2026 business days
+function gen2026Days() {
+  const weeks = [];
+  const start = new Date(2026, 0, 1);
+  let cur = new Date(start);
+  while (cur.getFullYear() === 2026) {
+    const weekDays = [];
+    const weekStart = new Date(cur);
+    // Mon-Fri week
+    while (weekDays.length < 5 && cur.getFullYear() === 2026) {
+      const dow = cur.getDay();
+      if (dow !== 0 && dow !== 6) {
+        weekDays.push({
+          date: new Date(cur),
+          label: `${cur.getMonth()+1}/${cur.getDate()}`,
+          month: cur.getMonth(),
+        });
+      }
+      cur.setDate(cur.getDate() + 1);
+      if (cur.getDay() === 1 && weekDays.length > 0) break;
+    }
+    if (weekDays.length > 0) {
+      const wl = weekStart;
+      const we = weekDays[weekDays.length - 1].date;
+      weeks.push({
+        label: `${wl.getMonth()+1}/${wl.getDate()}-${we.getMonth()+1}/${we.getDate()}`,
+        days: weekDays.map(d => ({
+          ...d,
+          scheduled: 0, pv: 0, np: 0, mnp: 0, ma: 0, rs: 0, wi: 0,
+          services: 0, checks: 0, cash: 0, cc: 0, ins: 0, pi: 0, supplements: 0,
+        }))
+      });
+    }
+  }
+  return weeks;
+}
+ 
+function initMonthlyNP() {
+  return MONTHS.map((m, mi) => ({
+    month: m,
+    patients: [],
+    nextFile: mi * 30 + 1,
+    monthlyInactives: 0,
+    referOut: 0,
+  }));
+}
+ 
+function emptyPatient(fileNum) {
+  return {
+    id: crypto.randomUUID(),
+    fileNum,
+    name: "",
+    // Active phase
+    source: "",
+    day1Date: "", day1Doc: "", day2Date: "", day2Doc: "",
+    activeClose: "", npType: "", activeTxPlan: "", activePayment: "",
+    insuranceCash: "",
+    // Wellness phase
+    wellnessTxRxDate: "", wellnessTxRxDoc: "", wellnessClose: "",
+    wellnessTxPlan: "", wellnessPayment: "",
+    // Lifetime phase
+    lifetimeTxRxDate: "", lifetimeTxRxDoc: "", lifetimeClose: "",
+    lifetimeTxPlan: "", lifetimePayment: "",
+  };
+}
+ 
+function initMarketing() {
+  return {
+    fb: MONTHS.map(m => ({ month: m, spend: 0, collected: 0, leads: 0, np: 0, d2: 0, closes: 0 })),
+    google: MONTHS.map(m => ({ month: m, spend: 0, collected: 0, leads: 0, np: 0, d2: 0, closes: 0 })),
+  };
+}
+ 
+function initBusinessReview() {
+  return MONTHS.map(m => ({
+    month: m,
+    collections: 0, adjustments: 0, softwave: 0, decompression: 0,
+    newPatients: 0, closes: 0, activeFinish: 0, wellnessFinish: 0,
+    lifetimeConversion: 0, inactive: 0, mktgSpend: 0,
+    monthlyAutoPays: 0, goal: 0,
+  }));
+}
+ 
+function initBonuses() {
+  return {
+    baseline: BONUS_BASELINE,
+    team: MONTHS.map(m => ({ month: m, collections: 0 })),
+    docs: MONTHS.map(m => ({ month: m, collections: 0 })),
+    refunds: MONTHS.map(m => ({ month: m, total: 0, note: "" })),
+  };
+}
+ 
+function initFD() {
+  return gen2026Days().map(w => ({
+    ...w,
+    days: w.days.map(d => ({
+      ...d,
+      schedPV: 0, totalPV: 0, totalMA: 0, ma: 0, rs: 0, wi: 0,
+    }))
+  }));
+}
+ 
+function initSupplements() {
+  return MONTHS.map((m, i) => ({ month: m, supplements: 0, salesTax: 0 }));
+}
+ 
+const EVEREST_HISTORY = [
+  { year: 2022, pv:13772,np:488,ma:1546,rs:1599,services:87453,checks:4006.6,cash:9813,cc:709157.39,ins:96860.8,pi:20693.05,collections:840530.84 },
+  { year: 2021, pv:14268,np:538,ma:1798,rs:1226,services:1018689,checks:4196,cash:6878,cc:668651.64,ins:129545.44,pi:41651.7,collections:850922.78 },
+  { year: 2020, pv:11900,np:456,ma:1653,rs:1141,services:927048.52,checks:6145.6,cash:3893,cc:525166.08,ins:104306.16,pi:37719.1,collections:677229.94 },
+  { year: 2019, pv:11684,np:483,ma:1303,rs:1169,services:947398.5,checks:6927.55,cash:6754,cc:481383.57,ins:119194.34,pi:46024.1,collections:660283.56 },
+  { year: 2018, pv:10273,np:457,ma:1301,rs:1074,services:871740,checks:7854,cash:6283,cc:381882.03,ins:100778.03,pi:46286.59,collections:543083.65 },
+  { year: 2017, pv:9189,np:362,ma:1085,rs:1108,services:61537,checks:10917.66,cash:8349,cc:335853.2,ins:99284.27,pi:39203.79,collections:493607.92 },
+  { year: 2016, pv:9209,np:374,ma:1087,rs:1050,services:771679,checks:18102.55,cash:8524.56,cc:299159.21,ins:143998.02,pi:30738.55,collections:500522.89 },
+  { year: 2015, pv:9673,np:418,ma:1077,rs:964,services:755848.7,checks:19018.74,cash:7293.33,cc:322476.84,ins:173548.82,pi:0,collections:520606.97 },
+  { year: 2014, pv:10252,np:381,ma:1970,rs:1010,services:738387.7,checks:19575.41,cash:11764.55,cc:277426.55,ins:170086.83,pi:0,collections:481128.9 },
+  { year: 2013, pv:7292,np:323,ma:1146,rs:547,services:473002,checks:18856.17,cash:7671.65,cc:160940.81,ins:117402.23,pi:0,collections:304870.86 },
+];
+ 
+// ─── MAIN APP ─────────────────────────────────────────────────────────────────
+function App() {
+  const [tab, setTab] = useState("dashboard");
+  const [dailyWeeks, setDailyWeeks, r0] = usePersisted("dailyWeeks", gen2026Days);
+  const [monthlyNP,  setMonthlyNP,  r1] = usePersisted("monthlyNP",  initMonthlyNP);
+  const [marketing,  setMarketing,  r2] = usePersisted("marketing",  initMarketing);
+  const [bizReview,  setBizReview,  r3] = usePersisted("bizReview",  initBusinessReview);
+  const [bonuses,    setBonuses,    r4] = usePersisted("bonuses",    initBonuses);
+  const [fdWeeks,    setFdWeeks,    r5] = usePersisted("fdWeeks",    initFD);
+  const [supplements,setSupplements,r6] = usePersisted("supplements",initSupplements);
+  const [everest2026,setEverest2026,r7] = usePersisted("everest2026",{ pv:0,np:0,ma:0,rs:0,services:0,checks:0,cash:0,cc:0,ins:0,pi:0,collections:0 });
+  const [npMonth,    setNpMonth,    r8] = usePersisted("npMonth",    0);
+  const [saveFlash, setSaveFlash] = useState(false);
+ 
+  const allReady = r0 && r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8;
+ 
+  // Flash "Saved" indicator whenever any persisted state changes (after initial load)
+  const firstRender = useRef(true);
+  useEffect(() => {
+    if (firstRender.current) { firstRender.current = false; return; }
+    setSaveFlash(true);
+    const t = setTimeout(() => setSaveFlash(false), 1800);
+    return () => clearTimeout(t);
+  }, [dailyWeeks, monthlyNP, marketing, bizReview, bonuses, fdWeeks, supplements, everest2026, npMonth]);
+ 
+  const handleReset = () => {
+    if (!window.confirm("Reset ALL data to blank? This cannot be undone.")) return;
+    setDoc(doc(db, "chiro2026", DOC_ID), {}).then(() => window.location.reload());
+  };
+ 
+  // Show loading screen while Firestore loads
+  if (!allReady) return (
+    <div style={{ fontFamily: "'DM Sans', sans-serif", background: "#0f1117", minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, color: "#e8eaf0" }}>
+      <div style={{ width: 40, height: 40, border: "3px solid #2e3247", borderTop: "3px solid #4f8ef7", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <p style={{ color: "#8891aa", fontSize: 14 }}>Connecting to Firestore…</p>
+    </div>
+  );
+ 
+  // ── Derived: monthly totals from daily sheet
+  const monthlyTotals = useMemo(() => {
+    const totals = MONTHS.map(() => ({ pv:0,np:0,mnp:0,ma:0,rs:0,wi:0,services:0,checks:0,cash:0,cc:0,ins:0,pi:0,collections:0,supplements:0,scheduled:0 }));
+    dailyWeeks.forEach(w => w.days.forEach(d => {
+      const m = d.month;
+      if (m >= 0 && m < 12) {
+        totals[m].scheduled += Number(d.scheduled)||0;
+        totals[m].pv += Number(d.pv)||0;
+        totals[m].np += Number(d.np)||0;
+        totals[m].mnp += Number(d.mnp)||0;
+        totals[m].ma += Number(d.ma)||0;
+        totals[m].rs += Number(d.rs)||0;
+        totals[m].wi += Number(d.wi)||0;
+        totals[m].services += Number(d.services)||0;
+        totals[m].checks += Number(d.checks)||0;
+        totals[m].cash += Number(d.cash)||0;
+        totals[m].cc += Number(d.cc)||0;
+        totals[m].ins += Number(d.ins)||0;
+        totals[m].pi += Number(d.pi)||0;
+        totals[m].supplements += Number(d.supplements)||0;
+        totals[m].collections += (Number(d.checks)||0)+(Number(d.cash)||0)+(Number(d.cc)||0)+(Number(d.ins)||0)+(Number(d.pi)||0);
+      }
+    }));
+    return totals;
+  }, [dailyWeeks]);
+ 
+  const yearTotals = useMemo(() => {
+    return monthlyTotals.reduce((acc, m) => {
+      Object.keys(acc).forEach(k => { acc[k] += m[k]; });
+      return acc;
+    }, { pv:0,np:0,mnp:0,ma:0,rs:0,wi:0,services:0,checks:0,cash:0,cc:0,ins:0,pi:0,collections:0,supplements:0,scheduled:0 });
+  }, [monthlyTotals]);
+ 
+  // ── Derived: NP monthly stats
+  const npStats = useMemo(() => {
+    return monthlyNP.map(mo => {
+      const pts = mo.patients;
+      const totalNP = pts.length;
+      const d1 = pts.filter(p => p.day1Date).length;
+      const d2 = pts.filter(p => p.day2Date).length;
+      const activeClose = pts.filter(p => p.activeClose === "Y").length;
+      const wellnessClose = pts.filter(p => p.wellnessClose === "Y").length;
+      const lifetimeClose = pts.filter(p => p.lifetimeClose === "Y").length;
+      const drH = pts.filter(p => p.day1Doc === "Dr.H");
+      const drA = pts.filter(p => p.day1Doc === "Dr.A");
+      const sourceCounts = {};
+      SOURCES.forEach(s => { sourceCounts[s] = { total: 0, close: 0 }; });
+      pts.forEach(p => {
+        if (p.source && sourceCounts[p.source]) {
+          sourceCounts[p.source].total++;
+          if (p.activeClose === "Y") sourceCounts[p.source].close++;
+        }
+      });
+      const insCounts = {};
+      INSURANCE_TYPES.forEach(t => { insCounts[t] = { total: 0, close: 0 }; });
+      pts.forEach(p => {
+        if (p.insuranceCash && insCounts[p.insuranceCash]) {
+          insCounts[p.insuranceCash].total++;
+          if (p.activeClose === "Y") insCounts[p.insuranceCash].close++;
+        }
+      });
+      const npTypes = { Chiropractic: 0, Decompression: 0, Softwave: 0 };
+      pts.forEach(p => { if (p.npType && npTypes[p.npType] !== undefined) npTypes[p.npType]++; });
+      return { totalNP, d1, d2, activeClose, wellnessClose, lifetimeClose, drH: drH.length, drA: drA.length, sourceCounts, insCounts, npTypes, inactives: mo.monthlyInactives || 0, referOut: mo.referOut || 0 };
+    });
+  }, [monthlyNP]);
+ 
+  const tabs = [
+    { id: "dashboard", label: "Dashboard", icon: "⬡" },
+    { id: "daily", label: "Daily Log", icon: "📅" },
+    { id: "np", label: "New Patients", icon: "👥" },
+    { id: "yearend", label: "Year End", icon: "📊" },
+    { id: "bizreview", label: "Business Review", icon: "📈" },
+    { id: "marketing", label: "Marketing", icon: "📣" },
+    { id: "bonuses", label: "Bonuses", icon: "💰" },
+    { id: "fd", label: "Front Desk", icon: "🖥" },
+    { id: "supplements", label: "Supplements", icon: "💊" },
+    { id: "everest", label: "Everest Stats", icon: "🏆" },
+  ];
+ 
+  return (
+    <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif", background: "#0f1117", minHeight: "100vh", color: "#e8eaf0" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #1a1d27; }
+        ::-webkit-scrollbar-thumb { background: #2e3247; border-radius: 3px; }
+        input, select, textarea { background: #1e2130; border: 1px solid #2e3247; color: #e8eaf0; border-radius: 6px; padding: 5px 8px; font-family: inherit; font-size: 13px; outline: none; width: 100%; }
+        input:focus, select:focus { border-color: #4f8ef7; }
+        .cell-input { background: transparent; border: none; border-radius: 0; padding: 4px 6px; text-align: right; min-width: 60px; }
+        .cell-input:focus { background: #1e2130; border: 1px solid #4f8ef7; }
+        .tag-y { background: #1a3a1a; color: #4ade80; border: 1px solid #166534; }
+        .tag-n { background: #3a1a1a; color: #f87171; border: 1px solid #7f1d1d; }
+        .tag-r { background: #1a2a3a; color: #60a5fa; border: 1px solid #1e3a5f; }
+        .kpi-card { background: #161922; border: 1px solid #2e3247; border-radius: 12px; padding: 18px 22px; }
+        .table-wrap { overflow-x: auto; }
+        table { border-collapse: collapse; width: 100%; font-size: 13px; }
+        th { background: #161922; color: #8891aa; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; padding: 8px 10px; text-align: right; border-bottom: 1px solid #2e3247; white-space: nowrap; }
+        th:first-child { text-align: left; }
+        td { padding: 6px 10px; border-bottom: 1px solid #1e2130; text-align: right; font-family: 'DM Mono', monospace; font-size: 12px; white-space: nowrap; }
+        td:first-child { text-align: left; font-family: 'DM Sans', sans-serif; }
+        tr:hover td { background: #161922; }
+        .week-total td { background: #161922; font-weight: 600; color: #a5b4fc; border-top: 1px solid #2e3247; }
+        .quarter-row td { background: #1a1d27; font-weight: 700; color: #f59e0b; border-top: 2px solid #2e3247; border-bottom: 2px solid #2e3247; }
+        .year-row td { background: #161922; font-weight: 700; color: #4f8ef7; font-size: 14px; border-top: 2px solid #4f8ef7; }
+        .btn { cursor: pointer; border: none; border-radius: 8px; padding: 7px 16px; font-family: inherit; font-size: 13px; font-weight: 500; transition: all 0.15s; }
+        .btn-primary { background: #4f8ef7; color: #fff; }
+        .btn-primary:hover { background: #3b7de0; }
+        .btn-danger { background: #3a1a1a; color: #f87171; border: 1px solid #7f1d1d; }
+        .btn-danger:hover { background: #7f1d1d; }
+        .section-header { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: #8891aa; margin-bottom: 12px; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+        .badge-blue { background: #1e3a5f; color: #60a5fa; }
+        .badge-green { background: #14532d; color: #4ade80; }
+        .badge-red { background: #450a0a; color: #f87171; }
+        .badge-amber { background: #451a03; color: #fbbf24; }
+        .np-section-header { background: #1a1d27; color: #8891aa; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; padding: 4px 8px; }
+      `}</style>
+ 
+      {/* Top nav */}
+      <div style={{ background: "#0d0f18", borderBottom: "1px solid #1e2130", padding: "0 24px", display: "flex", alignItems: "center", gap: 0, overflowX: "auto" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginRight: 32, flexShrink: 0 }}>
+          <div style={{ width: 28, height: 28, background: "linear-gradient(135deg, #4f8ef7, #a78bfa)", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>⬡</div>
+          <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: "-0.01em" }}>ChiroStats <span style={{ color: "#4f8ef7" }}>2026</span></span>
+        </div>
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)} style={{ background: "none", border: "none", cursor: "pointer", padding: "16px 14px", color: tab === t.id ? "#4f8ef7" : "#8891aa", fontWeight: tab === t.id ? 600 : 400, fontSize: 13, fontFamily: "inherit", borderBottom: tab === t.id ? "2px solid #4f8ef7" : "2px solid transparent", whiteSpace: "nowrap", transition: "color 0.15s" }}>
+            {t.icon} {t.label}
+          </button>
+        ))}
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12, flexShrink: 0, paddingLeft: 16 }}>
+          <span style={{ fontSize: 12, color: saveFlash ? "#34d399" : "transparent", transition: "color 0.4s", fontWeight: 500, display: "flex", alignItems: "center", gap: 4 }}>
+            ✓ Saved
+          </span>
+          <button onClick={handleReset} style={{ background: "none", border: "1px solid #2e3247", borderRadius: 6, color: "#8891aa", fontSize: 12, padding: "5px 10px", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+            ↺ Reset All
+          </button>
+        </div>
+      </div>
+ 
+      <div style={{ padding: "28px 28px", maxWidth: 1600, margin: "0 auto" }}>
+        {tab === "dashboard" && <Dashboard yearTotals={yearTotals} monthlyTotals={monthlyTotals} npStats={npStats} monthlyNP={monthlyNP} bonuses={bonuses} bizReview={bizReview} marketing={marketing} />}
+        {tab === "daily" && <DailyLog dailyWeeks={dailyWeeks} setDailyWeeks={setDailyWeeks} monthlyTotals={monthlyTotals} yearTotals={yearTotals} />}
+        {tab === "np" && <NewPatients monthlyNP={monthlyNP} setMonthlyNP={setMonthlyNP} npStats={npStats} npMonth={npMonth} setNpMonth={setNpMonth} />}
+        {tab === "yearend" && <YearEnd monthlyTotals={monthlyTotals} yearTotals={yearTotals} supplements={supplements} />}
+        {tab === "bizreview" && <BusinessReview bizReview={bizReview} setBizReview={setBizReview} monthlyTotals={monthlyTotals} npStats={npStats} />}
+        {tab === "marketing" && <Marketing marketing={marketing} setMarketing={setMarketing} />}
+        {tab === "bonuses" && <Bonuses bonuses={bonuses} setBonuses={setBonuses} monthlyTotals={monthlyTotals} />}
+        {tab === "fd" && <FrontDesk fdWeeks={fdWeeks} setFdWeeks={setFdWeeks} />}
+        {tab === "supplements" && <Supplements supplements={supplements} setSupplements={setSupplements} />}
+        {tab === "everest" && <EverestStats everest2026={everest2026} setEverest2026={setEverest2026} />}
+      </div>
+    </div>
+  );
+}
+ 
+// ─── DASHBOARD ────────────────────────────────────────────────────────────────
+function Dashboard({ yearTotals, monthlyTotals, npStats, monthlyNP, bonuses, bizReview, marketing }) {
+  const totalNP = npStats.reduce((s, m) => s + m.totalNP, 0);
+  const totalCloses = npStats.reduce((s, m) => s + m.activeClose, 0);
+  const closeRate = pct(totalCloses, totalNP);
+  const ova = yearTotals.pv > 0 ? yearTotals.collections / yearTotals.pv : 0;
+  const pva = yearTotals.np > 0 ? yearTotals.pv / yearTotals.np : 0;
+  const currentMonth = new Date().getMonth();
+  const curMo = monthlyTotals[currentMonth] || monthlyTotals[0];
+  const curNP = npStats[currentMonth] || npStats[0];
+  const totalInactives = npStats.reduce((s, m) => s + m.inactives, 0);
+  const netMomentum = totalCloses - totalInactives;
+ 
+  const kpis = [
+    { label: "YTD Collections", value: fmtDollar(yearTotals.collections), sub: `${MONTHS[currentMonth]} ${fmtDollar(curMo.collections)}`, color: "#4f8ef7" },
+    { label: "YTD Patient Visits", value: fmt(yearTotals.pv), sub: `OVA ${fmtDollar(ova)}`, color: "#a78bfa" },
+    { label: "New Patients YTD", value: fmt(totalNP), sub: `This month: ${curNP.totalNP}`, color: "#34d399" },
+    { label: "Close Rate", value: closeRate !== null ? fmtPct(closeRate) : "—", sub: `${totalCloses} of ${totalNP} closed`, color: "#fbbf24" },
+    { label: "Net Momentum", value: fmt(netMomentum), sub: `Closes ${totalCloses} − Inactives ${totalInactives}`, color: netMomentum >= 0 ? "#34d399" : "#f87171" },
+    { label: "Avg Visit Value", value: fmtDollar(ova), sub: `PVA ${fmt(pva, 1)}`, color: "#60a5fa" },
+    { label: "YTD Services", value: fmtDollar(yearTotals.services), sub: `Supplements ${fmtDollar(yearTotals.supplements)}`, color: "#fb923c" },
+    { label: "Total PV", value: fmt(yearTotals.pv), sub: `NP ${fmt(yearTotals.np)} | RS ${fmt(yearTotals.rs)} | WI ${fmt(yearTotals.wi)}`, color: "#e879f9" },
+  ];
+ 
+  return (
+    <div>
+      <div style={{ marginBottom: 28 }}>
+        <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: "-0.02em" }}>2026 Practice Dashboard</h1>
+        <p style={{ color: "#8891aa", marginTop: 4, fontSize: 14 }}>Live metrics across all practice areas</p>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 14, marginBottom: 32 }}>
+        {kpis.map(k => (
+          <div key={k.label} className="kpi-card">
+            <div style={{ fontSize: 11, color: "#8891aa", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>{k.label}</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: k.color, letterSpacing: "-0.02em", lineHeight: 1 }}>{k.value}</div>
+            <div style={{ fontSize: 12, color: "#8891aa", marginTop: 6 }}>{k.sub}</div>
+          </div>
+        ))}
+      </div>
+ 
+      {/* Monthly collections bar */}
+      <div className="kpi-card" style={{ marginBottom: 20 }}>
+        <div className="section-header">Monthly Collections Trend</div>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 90 }}>
+          {monthlyTotals.map((m, i) => {
+            const maxColl = Math.max(...monthlyTotals.map(x => x.collections), 1);
+            const h = Math.max(4, (m.collections / maxColl) * 80);
+            return (
+              <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                <div style={{ width: "100%", background: m.collections > 0 ? "#4f8ef7" : "#2e3247", height: h, borderRadius: "4px 4px 0 0", transition: "height 0.3s", minHeight: 4 }} title={`${MONTHS[i]}: ${fmtDollar(m.collections)}`} />
+                <div style={{ fontSize: 10, color: "#8891aa" }}>{MONTHS[i]}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+ 
+      {/* Monthly NP bar */}
+      <div className="kpi-card" style={{ marginBottom: 20 }}>
+        <div className="section-header">Monthly New Patients</div>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 80 }}>
+          {npStats.map((m, i) => {
+            const maxNP = Math.max(...npStats.map(x => x.totalNP), 1);
+            const h = Math.max(4, (m.totalNP / maxNP) * 70);
+            return (
+              <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                <div style={{ width: "100%", background: m.totalNP > 0 ? "#a78bfa" : "#2e3247", height: h, borderRadius: "4px 4px 0 0", minHeight: 4 }} title={`${MONTHS[i]}: ${m.totalNP} NP`} />
+                <div style={{ fontSize: 10, color: "#8891aa" }}>{MONTHS[i]}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+ 
+      {/* Payment mix */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <div className="kpi-card">
+          <div className="section-header">Collections Mix</div>
+          {[
+            { label: "Credit Card", val: yearTotals.cc, color: "#4f8ef7" },
+            { label: "Insurance", val: yearTotals.ins, color: "#a78bfa" },
+            { label: "Cash", val: yearTotals.cash, color: "#34d399" },
+            { label: "Checks", val: yearTotals.checks, color: "#fbbf24" },
+            { label: "PI/WC", val: yearTotals.pi, color: "#fb923c" },
+          ].map(r => {
+            const pctVal = yearTotals.collections > 0 ? (r.val / yearTotals.collections) * 100 : 0;
+            return (
+              <div key={r.label} style={{ marginBottom: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
+                  <span style={{ color: "#c8cfe0" }}>{r.label}</span>
+                  <span style={{ fontFamily: "'DM Mono', monospace", color: r.color }}>{fmtDollar(r.val)} ({fmtPct(pctVal)})</span>
+                </div>
+                <div style={{ height: 5, background: "#2e3247", borderRadius: 3 }}>
+                  <div style={{ height: "100%", width: `${pctVal}%`, background: r.color, borderRadius: 3, transition: "width 0.5s" }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="kpi-card">
+          <div className="section-header">NP Source Breakdown (YTD)</div>
+          {SOURCES.map(s => {
+            const total = npStats.reduce((sum, m) => sum + (m.sourceCounts[s]?.total || 0), 0);
+            const closes = npStats.reduce((sum, m) => sum + (m.sourceCounts[s]?.close || 0), 0);
+            if (total === 0) return null;
+            return (
+              <div key={s} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "4px 0", borderBottom: "1px solid #1e2130" }}>
+                <span style={{ color: "#c8cfe0" }}>{s}</span>
+                <span style={{ fontFamily: "'DM Mono', monospace" }}>{total} leads / {closes} closed ({closes > 0 ? fmtPct(pct(closes, total)) : "—"})</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+ 
+// ─── DAILY LOG ────────────────────────────────────────────────────────────────
+function DailyLog({ dailyWeeks, setDailyWeeks, monthlyTotals, yearTotals }) {
+  const [openWeeks, setOpenWeeks] = useState(() => new Set([0]));
+  const [filterMonth, setFilterMonth] = useState("all");
+ 
+  const updateDay = useCallback((wi, di, field, val) => {
+    setDailyWeeks(prev => {
+      const next = prev.map((w, i) => i !== wi ? w : {
+        ...w, days: w.days.map((d, j) => j !== di ? d : { ...d, [field]: val })
+      });
+      return next;
+    });
+  }, [setDailyWeeks]);
+ 
+  const weekTotal = (days, field) => days.reduce((s, d) => s + (Number(d[field]) || 0), 0);
+  const collections = d => (Number(d.checks)||0)+(Number(d.cash)||0)+(Number(d.cc)||0)+(Number(d.ins)||0)+(Number(d.pi)||0);
+ 
+  const cols = ["scheduled","pv","np","mnp","ma","rs","wi","services","checks","cash","cc","ins","pi","collections","supplements"];
+  const colLabels = ["Sched","PV","NP","MNP","MA","RS","WI","Services","Checks","Cash","CC","Ins","PI","Collections","Suppl"];
+ 
+  const filteredWeeks = filterMonth === "all" ? dailyWeeks : dailyWeeks.filter(w => w.days.some(d => d.month === Number(filterMonth)));
+ 
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div>
+          <h2 style={{ fontSize: 20, fontWeight: 700 }}>Daily Log</h2>
+          <p style={{ color: "#8891aa", fontSize: 13 }}>Click any cell to edit. Weekly totals auto-calculate.</p>
+        </div>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <select value={filterMonth} onChange={e => setFilterMonth(e.target.value)} style={{ width: 130 }}>
+            <option value="all">All Months</option>
+            {MONTHS.map((m, i) => <option key={m} value={i}>{MONTH_NAMES[i]}</option>)}
+          </select>
+        </div>
+      </div>
+ 
+      {/* Year totals */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 10, marginBottom: 24 }}>
+        {["collections","pv","np","services","checks","cash","cc","ins","pi"].map(k => (
+          <div key={k} className="kpi-card" style={{ padding: "12px 14px" }}>
+            <div style={{ fontSize: 10, color: "#8891aa", textTransform: "uppercase", letterSpacing: "0.08em" }}>{k === "pv" ? "Patient Visits" : k.toUpperCase()}</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#e8eaf0", marginTop: 4, fontFamily: "'DM Mono', monospace" }}>
+              {k === "collections" || k === "services" || k === "checks" || k === "cash" || k === "cc" || k === "ins" || k === "pi" ? fmtDollar(yearTotals[k]) : fmt(yearTotals[k])}
+            </div>
+          </div>
+        ))}
+      </div>
+ 
+      {filteredWeeks.map((week, wi) => {
+        const realWi = dailyWeeks.indexOf(week);
+        const isOpen = openWeeks.has(realWi);
+        const wTotals = {};
+        cols.forEach(c => { wTotals[c] = c === "collections" ? week.days.reduce((s, d) => s + collections(d), 0) : weekTotal(week.days, c); });
+        return (
+          <div key={realWi} style={{ marginBottom: 8, background: "#161922", border: "1px solid #2e3247", borderRadius: 10, overflow: "hidden" }}>
+            <div onClick={() => setOpenWeeks(prev => { const n = new Set(prev); n.has(realWi) ? n.delete(realWi) : n.add(realWi); return n; })}
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", cursor: "pointer", background: isOpen ? "#1a1d27" : "transparent" }}>
+              <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "#a5b4fc" }}>Week of {week.label}</span>
+                <span style={{ fontSize: 12, color: "#8891aa" }}>{MONTH_NAMES[week.days[0]?.month]}</span>
+              </div>
+              <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+                <span style={{ fontSize: 12, color: "#4f8ef7", fontFamily: "'DM Mono', monospace" }}>{fmtDollar(wTotals.collections)}</span>
+                <span style={{ fontSize: 12, color: "#a78bfa", fontFamily: "'DM Mono', monospace" }}>PV {wTotals.pv}</span>
+                <span style={{ color: "#8891aa", fontSize: 14 }}>{isOpen ? "▲" : "▼"}</span>
+              </div>
+            </div>
+            {isOpen && (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left" }}>Date</th>
+                      {colLabels.map(l => <th key={l}>{l}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {week.days.map((day, di) => (
+                      <tr key={di}>
+                        <td style={{ color: "#c8cfe0", fontWeight: 500 }}>{day.label}</td>
+                        {cols.map(c => (
+                          c === "collections"
+                            ? <td key={c} style={{ color: "#4f8ef7" }}>{fmtDollar(collections(day))}</td>
+                            : <td key={c} style={{ padding: 0 }}>
+                                <input className="cell-input" type="number" value={day[c] || ""} placeholder="0"
+                                  onChange={e => updateDay(realWi, di, c, e.target.value)} />
+                              </td>
+                        ))}
+                      </tr>
+                    ))}
+                    <tr className="week-total">
+                      <td>Weekly Total</td>
+                      {cols.map(c => (
+                        <td key={c} style={{ color: c === "collections" ? "#4f8ef7" : undefined }}>
+                          {c === "collections" || c === "services" || c === "checks" || c === "cash" || c === "cc" || c === "ins" || c === "pi" || c === "supplements" ? fmtDollar(wTotals[c]) : fmt(wTotals[c])}
+                        </td>
+                      ))}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })}
+ 
+      {/* Monthly summary */}
+      <div style={{ marginTop: 28 }}>
+        <div className="section-header">Monthly Summary</div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Month</th>
+                <th>Scheduled</th><th>PV</th><th>NP</th><th>MA</th><th>RS</th><th>WI</th>
+                <th>Services</th><th>Checks</th><th>Cash</th><th>CC</th><th>Insurance</th><th>PI</th><th>Collections</th><th>Suppl</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[0,1,2].map(q => (
+                <>
+                  {[0,1,2].map(mi => {
+                    const i = q * 3 + mi;
+                    const m = monthlyTotals[i];
+                    return (
+                      <tr key={i}>
+                        <td style={{ color: "#c8cfe0" }}>{MONTH_NAMES[i]}</td>
+                        <td>{fmt(m.scheduled)}</td><td>{fmt(m.pv)}</td><td>{fmt(m.np)}</td><td>{fmt(m.ma)}</td><td>{fmt(m.rs)}</td><td>{fmt(m.wi)}</td>
+                        <td>{fmtDollar(m.services)}</td><td>{fmtDollar(m.checks)}</td><td>{fmtDollar(m.cash)}</td><td>{fmtDollar(m.cc)}</td><td>{fmtDollar(m.ins)}</td><td>{fmtDollar(m.pi)}</td>
+                        <td style={{ color: "#4f8ef7" }}>{fmtDollar(m.collections)}</td><td>{fmtDollar(m.supplements)}</td>
+                      </tr>
+                    );
+                  })}
+                  <tr className="quarter-row">
+                    <td>Q{q+1} Total</td>
+                    {["scheduled","pv","np","ma","rs","wi","services","checks","cash","cc","ins","pi","collections","supplements"].map(k => {
+                      const sum = [0,1,2].reduce((s, mi) => s + monthlyTotals[q*3+mi][k], 0);
+                      return <td key={k}>{k==="pv"||k==="np"||k==="ma"||k==="rs"||k==="wi"||k==="scheduled" ? fmt(sum) : fmtDollar(sum)}</td>;
+                    })}
+                  </tr>
+                </>
+              ))}
+              {[9,10,11].map(i => {
+                const m = monthlyTotals[i];
+                return (
+                  <tr key={i}>
+                    <td style={{ color: "#c8cfe0" }}>{MONTH_NAMES[i]}</td>
+                    <td>{fmt(m.scheduled)}</td><td>{fmt(m.pv)}</td><td>{fmt(m.np)}</td><td>{fmt(m.ma)}</td><td>{fmt(m.rs)}</td><td>{fmt(m.wi)}</td>
+                    <td>{fmtDollar(m.services)}</td><td>{fmtDollar(m.checks)}</td><td>{fmtDollar(m.cash)}</td><td>{fmtDollar(m.cc)}</td><td>{fmtDollar(m.ins)}</td><td>{fmtDollar(m.pi)}</td>
+                    <td style={{ color: "#4f8ef7" }}>{fmtDollar(m.collections)}</td><td>{fmtDollar(m.supplements)}</td>
+                  </tr>
+                );
+              })}
+              <tr className="quarter-row">
+                <td>Q4 Total</td>
+                {["scheduled","pv","np","ma","rs","wi","services","checks","cash","cc","ins","pi","collections","supplements"].map(k => {
+                  const sum = [9,10,11].reduce((s, mi) => s + monthlyTotals[mi][k], 0);
+                  return <td key={k}>{k==="pv"||k==="np"||k==="ma"||k==="rs"||k==="wi"||k==="scheduled" ? fmt(sum) : fmtDollar(sum)}</td>;
+                })}
+              </tr>
+              <tr className="year-row">
+                <td>YEAR TOTAL</td>
+                {["scheduled","pv","np","ma","rs","wi","services","checks","cash","cc","ins","pi","collections","supplements"].map(k => {
+                  const sum = monthlyTotals.reduce((s, m) => s + m[k], 0);
+                  return <td key={k} style={{ color: "#4f8ef7" }}>{k==="pv"||k==="np"||k==="ma"||k==="rs"||k==="wi"||k==="scheduled" ? fmt(sum) : fmtDollar(sum)}</td>;
+                })}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+ 
+// ─── NEW PATIENTS ─────────────────────────────────────────────────────────────
+function NewPatients({ monthlyNP, setMonthlyNP, npStats, npMonth, setNpMonth }) {
+  const mo = monthlyNP[npMonth];
+  const stats = npStats[npMonth];
+ 
+  const addPatient = () => {
+    setMonthlyNP(prev => prev.map((m, i) => i !== npMonth ? m : {
+      ...m,
+      patients: [...m.patients, emptyPatient(m.nextFile)],
+      nextFile: m.nextFile + 1,
+    }));
+  };
+ 
+  const deletePatient = (pid) => {
+    setMonthlyNP(prev => prev.map((m, i) => i !== npMonth ? m : {
+      ...m, patients: m.patients.filter(p => p.id !== pid)
+    }));
+  };
+ 
+  const updatePatient = (pid, field, val) => {
+    setMonthlyNP(prev => prev.map((m, i) => i !== npMonth ? m : {
+      ...m, patients: m.patients.map(p => p.id !== pid ? p : { ...p, [field]: val })
+    }));
+  };
+ 
+  const updateMeta = (field, val) => {
+    setMonthlyNP(prev => prev.map((m, i) => i !== npMonth ? m : { ...m, [field]: val }));
+  };
+ 
+  const TagSelect = ({ value, onChange }) => (
+    <select value={value} onChange={e => onChange(e.target.value)} style={{ width: 60 }}>
+      <option value="">—</option>
+      <option value="Y">Y</option>
+      <option value="N">N</option>
+      <option value="R">R</option>
+    </select>
+  );
+ 
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div>
+          <h2 style={{ fontSize: 20, fontWeight: 700 }}>New Patient Tracker</h2>
+          <p style={{ color: "#8891aa", fontSize: 13 }}>Track patient journey through Active → Wellness → Lifetime care</p>
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <select value={npMonth} onChange={e => setNpMonth(Number(e.target.value))} style={{ width: 140 }}>
+            {MONTHS.map((m, i) => <option key={m} value={i}>{MONTH_NAMES[i]}</option>)}
+          </select>
+          <button className="btn btn-primary" onClick={addPatient}>+ Add Patient</button>
+        </div>
+      </div>
+ 
+      {/* Stats panel */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 12, marginBottom: 24 }}>
+        {[
+          { label: "Total NP", val: fmt(stats.totalNP), color: "#4f8ef7" },
+          { label: "Day 1 Show", val: fmt(stats.d1), color: "#a78bfa" },
+          { label: "Day 2 Show", val: `${fmt(stats.d2)} (${fmtPct(pct(stats.d2, stats.d1))})`, color: "#34d399" },
+          { label: "Active Close", val: `${fmt(stats.activeClose)} (${fmtPct(pct(stats.activeClose, stats.d2))})`, color: "#fbbf24" },
+          { label: "Wellness Close", val: `${fmt(stats.wellnessClose)} (${fmtPct(pct(stats.wellnessClose, stats.activeClose))})`, color: "#fb923c" },
+          { label: "Lifetime Close", val: `${fmt(stats.lifetimeClose)} (${fmtPct(pct(stats.lifetimeClose, stats.wellnessClose))})`, color: "#e879f9" },
+          { label: "Dr.H / Dr.A", val: `${stats.drH} / ${stats.drA}`, color: "#60a5fa" },
+          { label: "Inactives", val: fmt(stats.inactives), color: "#f87171" },
+        ].map(k => (
+          <div key={k.label} className="kpi-card" style={{ padding: "10px 14px" }}>
+            <div style={{ fontSize: 10, color: "#8891aa", textTransform: "uppercase", letterSpacing: "0.08em" }}>{k.label}</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: k.color, marginTop: 4 }}>{k.val}</div>
+          </div>
+        ))}
+      </div>
+ 
+      {/* Patient table */}
+      <div className="table-wrap" style={{ marginBottom: 24 }}>
+        <table>
+          <thead>
+            <tr>
+              <th style={{ textAlign: "left" }}>File#</th>
+              <th style={{ textAlign: "left", minWidth: 140 }}>Patient Name</th>
+              <th className="np-section-header" colSpan={10}>Initial / Active Phase</th>
+              <th className="np-section-header" colSpan={5}>Wellness Phase</th>
+              <th className="np-section-header" colSpan={4}>Lifetime Phase</th>
+              <th></th>
+            </tr>
+            <tr>
+              <th></th><th></th>
+              <th>Source</th><th>D1 Date</th><th>D1 Doc</th><th>D2 Date</th><th>D2 Doc</th><th>Close</th><th>NP Type</th><th>Tx Plan</th><th>Payment</th><th>Ins/Cash</th>
+              <th>Tx Date</th><th>Doc</th><th>Close</th><th>Tx Plan</th><th>Payment</th>
+              <th>Tx Date</th><th>Doc</th><th>Close</th><th>Payment</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {mo.patients.length === 0 && (
+              <tr><td colSpan={22} style={{ textAlign: "center", color: "#8891aa", padding: 28 }}>No patients this month — click "+ Add Patient" to begin</td></tr>
+            )}
+            {mo.patients.map(p => (
+              <tr key={p.id}>
+                <td style={{ color: "#8891aa", fontSize: 11 }}>{p.fileNum}</td>
+                <td style={{ padding: 0 }}><input value={p.name} onChange={e => updatePatient(p.id, "name", e.target.value)} placeholder="Patient Name" style={{ minWidth: 140 }} /></td>
+                <td style={{ padding: 0 }}>
+                  <select value={p.source} onChange={e => updatePatient(p.id, "source", e.target.value)} style={{ minWidth: 120 }}>
+                    <option value="">—</option>
+                    {SOURCES.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </td>
+                <td style={{ padding: 0 }}><input type="date" value={p.day1Date} onChange={e => updatePatient(p.id, "day1Date", e.target.value)} style={{ minWidth: 110 }} /></td>
+                <td style={{ padding: 0 }}>
+                  <select value={p.day1Doc} onChange={e => updatePatient(p.id, "day1Doc", e.target.value)} style={{ width: 80 }}>
+                    <option value="">—</option>
+                    {DOCS.map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </td>
+                <td style={{ padding: 0 }}><input type="date" value={p.day2Date} onChange={e => updatePatient(p.id, "day2Date", e.target.value)} style={{ minWidth: 110 }} /></td>
+                <td style={{ padding: 0 }}>
+                  <select value={p.day2Doc} onChange={e => updatePatient(p.id, "day2Doc", e.target.value)} style={{ width: 80 }}>
+                    <option value="">—</option>
+                    {DOCS.map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </td>
+                <td style={{ padding: 0 }}><TagSelect value={p.activeClose} onChange={v => updatePatient(p.id, "activeClose", v)} /></td>
+                <td style={{ padding: 0 }}>
+                  <select value={p.npType} onChange={e => updatePatient(p.id, "npType", e.target.value)} style={{ width: 110 }}>
+                    <option value="">—</option>
+                    {NP_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </td>
+                <td style={{ padding: 0 }}><input className="cell-input" value={p.activeTxPlan} onChange={e => updatePatient(p.id, "activeTxPlan", e.target.value)} placeholder="$" style={{ width: 70 }} /></td>
+                <td style={{ padding: 0 }}>
+                  <select value={p.activePayment} onChange={e => updatePatient(p.id, "activePayment", e.target.value)} style={{ width: 90 }}>
+                    <option value="">—</option>
+                    {PAYMENT_TYPES_ACTIVE.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </td>
+                <td style={{ padding: 0 }}>
+                  <select value={p.insuranceCash} onChange={e => updatePatient(p.id, "insuranceCash", e.target.value)} style={{ width: 80 }}>
+                    <option value="">—</option>
+                    {INSURANCE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </td>
+                {/* Wellness */}
+                <td style={{ padding: 0 }}><input type="date" value={p.wellnessTxRxDate} onChange={e => updatePatient(p.id, "wellnessTxRxDate", e.target.value)} style={{ minWidth: 110 }} /></td>
+                <td style={{ padding: 0 }}>
+                  <select value={p.wellnessTxRxDoc} onChange={e => updatePatient(p.id, "wellnessTxRxDoc", e.target.value)} style={{ width: 80 }}>
+                    <option value="">—</option>
+                    {DOCS.map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </td>
+                <td style={{ padding: 0 }}><TagSelect value={p.wellnessClose} onChange={v => updatePatient(p.id, "wellnessClose", v)} /></td>
+                <td style={{ padding: 0 }}><input className="cell-input" value={p.wellnessTxPlan} onChange={e => updatePatient(p.id, "wellnessTxPlan", e.target.value)} placeholder="$" style={{ width: 70 }} /></td>
+                <td style={{ padding: 0 }}>
+                  <select value={p.wellnessPayment} onChange={e => updatePatient(p.id, "wellnessPayment", e.target.value)} style={{ width: 90 }}>
+                    <option value="">—</option>
+                    {PAYMENT_TYPES_WELLNESS.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </td>
+                {/* Lifetime */}
+                <td style={{ padding: 0 }}><input type="date" value={p.lifetimeTxRxDate} onChange={e => updatePatient(p.id, "lifetimeTxRxDate", e.target.value)} style={{ minWidth: 110 }} /></td>
+                <td style={{ padding: 0 }}>
+                  <select value={p.lifetimeTxRxDoc} onChange={e => updatePatient(p.id, "lifetimeTxRxDoc", e.target.value)} style={{ width: 80 }}>
+                    <option value="">—</option>
+                    {DOCS.map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </td>
+                <td style={{ padding: 0 }}><TagSelect value={p.lifetimeClose} onChange={v => updatePatient(p.id, "lifetimeClose", v)} /></td>
+                <td style={{ padding: 0 }}>
+                  <select value={p.lifetimePayment} onChange={e => updatePatient(p.id, "lifetimePayment", e.target.value)} style={{ width: 90 }}>
+                    <option value="">—</option>
+                    {PAYMENT_TYPES_LIFETIME.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </td>
+                <td><button className="btn btn-danger" style={{ padding: "3px 8px", fontSize: 12 }} onClick={() => deletePatient(p.id)}>✕</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+ 
+      {/* Summary panels */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+        {/* Source breakdown */}
+        <div className="kpi-card">
+          <div className="section-header">Source Conversion</div>
+          <table>
+            <thead><tr><th style={{ textAlign: "left" }}>Source</th><th>Total</th><th>Close</th><th>Conv%</th></tr></thead>
+            <tbody>
+              {SOURCES.map(s => {
+                const { total, close } = stats.sourceCounts[s] || { total: 0, close: 0 };
+                if (total === 0) return null;
+                return <tr key={s}><td>{s}</td><td>{total}</td><td>{close}</td><td>{fmtPct(pct(close, total))}</td></tr>;
+              })}
+              <tr style={{ fontWeight: 700, borderTop: "1px solid #2e3247" }}>
+                <td>TOTAL</td>
+                <td>{stats.totalNP}</td>
+                <td>{stats.activeClose}</td>
+                <td>{fmtPct(pct(stats.activeClose, stats.totalNP))}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        {/* Insurance breakdown */}
+        <div className="kpi-card">
+          <div className="section-header">Insurance Breakdown</div>
+          <table>
+            <thead><tr><th style={{ textAlign: "left" }}>Type</th><th>Total</th><th>Close</th><th>Conv%</th></tr></thead>
+            <tbody>
+              {INSURANCE_TYPES.map(t => {
+                const { total, close } = stats.insCounts[t] || { total: 0, close: 0 };
+                return <tr key={t}><td>{t}</td><td>{total}</td><td>{close}</td><td>{fmtPct(pct(close, total))}</td></tr>;
+              })}
+            </tbody>
+          </table>
+          <div style={{ marginTop: 12 }}>
+            <div className="section-header">NP Types</div>
+            {NP_TYPES.map(t => <div key={t} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" }}><span style={{ color: "#c8cfe0" }}>{t}</span><span style={{ fontFamily: "'DM Mono', monospace" }}>{stats.npTypes[t] || 0}</span></div>)}
+          </div>
+        </div>
+        {/* Monthly meta */}
+        <div className="kpi-card">
+          <div className="section-header">Monthly Meta</div>
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ fontSize: 12, color: "#8891aa", display: "block", marginBottom: 4 }}>Monthly Inactives</label>
+            <input type="number" value={mo.monthlyInactives || 0} onChange={e => updateMeta("monthlyInactives", Number(e.target.value))} />
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ fontSize: 12, color: "#8891aa", display: "block", marginBottom: 4 }}>Refer Out</label>
+            <input type="number" value={mo.referOut || 0} onChange={e => updateMeta("referOut", Number(e.target.value))} />
+          </div>
+          <div style={{ marginTop: 16, padding: "12px 0", borderTop: "1px solid #2e3247" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 6 }}>
+              <span style={{ color: "#8891aa" }}>D2 Show Rate</span>
+              <span style={{ fontFamily: "'DM Mono', monospace", color: "#34d399" }}>{fmtPct(pct(stats.d2, stats.d1))}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 6 }}>
+              <span style={{ color: "#8891aa" }}>Active Close Rate</span>
+              <span style={{ fontFamily: "'DM Mono', monospace", color: "#fbbf24" }}>{fmtPct(pct(stats.activeClose, stats.d2))}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 6 }}>
+              <span style={{ color: "#8891aa" }}>Wellness Upgrade</span>
+              <span style={{ fontFamily: "'DM Mono', monospace", color: "#fb923c" }}>{fmtPct(pct(stats.wellnessClose, stats.activeClose))}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+              <span style={{ color: "#8891aa" }}>Lifetime Upgrade</span>
+              <span style={{ fontFamily: "'DM Mono', monospace", color: "#e879f9" }}>{fmtPct(pct(stats.lifetimeClose, stats.wellnessClose))}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+ 
+// ─── YEAR END ─────────────────────────────────────────────────────────────────
+function YearEnd({ monthlyTotals, yearTotals, supplements }) {
+  const quarters = [[0,1,2],[3,4,5],[6,7,8],[9,10,11]];
+  const suppTotal = supplements.reduce((s, m) => s + (Number(m.supplements)||0), 0);
+  const suppTaxTotal = supplements.reduce((s, m) => s + (Number(m.salesTax)||0), 0);
+ 
+  return (
+    <div>
+      <div style={{ marginBottom: 20 }}>
+        <h2 style={{ fontSize: 20, fontWeight: 700 }}>2026 Year End Stats</h2>
+        <p style={{ color: "#8891aa", fontSize: 13 }}>Monthly and quarterly aggregates — auto-calculated from daily log</p>
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style={{ textAlign: "left" }}>Month</th>
+              <th>PV</th><th>NP</th><th>MNP</th><th>MA</th><th>RS</th><th>WI</th>
+              <th>Services</th><th>Checks</th><th>Cash</th><th>CC</th><th>Insurance</th><th>PI/WC</th><th>Collections</th>
+            </tr>
+          </thead>
+          <tbody>
+            {quarters.map((q, qi) => (
+              <>
+                {q.map(i => {
+                  const m = monthlyTotals[i];
+                  return (
+                    <tr key={i}>
+                      <td style={{ color: "#c8cfe0", fontWeight: 500 }}>{MONTH_NAMES[i]}</td>
+                      <td>{fmt(m.pv)}</td><td>{fmt(m.np)}</td><td>{fmt(m.mnp)}</td><td>{fmt(m.ma)}</td><td>{fmt(m.rs)}</td><td>{fmt(m.wi)}</td>
+                      <td>{fmtDollar(m.services)}</td><td>{fmtDollar(m.checks)}</td><td>{fmtDollar(m.cash)}</td><td>{fmtDollar(m.cc)}</td><td>{fmtDollar(m.ins)}</td><td>{fmtDollar(m.pi)}</td>
+                      <td style={{ color: "#4f8ef7" }}>{fmtDollar(m.collections)}</td>
+                    </tr>
+                  );
+                })}
+                <tr className="quarter-row">
+                  <td>Quarter #{qi + 1}</td>
+                  {["pv","np","mnp","ma","rs","wi","services","checks","cash","cc","ins","pi","collections"].map(k => {
+                    const sum = q.reduce((s, i) => s + monthlyTotals[i][k], 0);
+                    return <td key={k}>{["pv","np","mnp","ma","rs","wi"].includes(k) ? fmt(sum) : fmtDollar(sum)}</td>;
+                  })}
+                </tr>
+              </>
+            ))}
+            <tr className="year-row">
+              <td>YEARLY TOTALS</td>
+              {["pv","np","mnp","ma","rs","wi","services","checks","cash","cc","ins","pi","collections"].map(k => (
+                <td key={k} style={{ color: "#4f8ef7" }}>{["pv","np","mnp","ma","rs","wi"].includes(k) ? fmt(yearTotals[k]) : fmtDollar(yearTotals[k])}</td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+ 
+// ─── BUSINESS REVIEW ──────────────────────────────────────────────────────────
+function BusinessReview({ bizReview, setBizReview, monthlyTotals, npStats }) {
+  const update = (i, field, val) => {
+    setBizReview(prev => prev.map((m, j) => j !== i ? m : { ...m, [field]: val }));
+  };
+ 
+  const rows = [
+    { key: "collections", label: "Collections ($)", type: "dollar", auto: (i) => monthlyTotals[i].collections },
+    { key: "adjustments", label: "Adjustments ($)", type: "dollar" },
+    { key: "softwave", label: "Softwave ($)", type: "dollar" },
+    { key: "decompression", label: "Decompression ($)", type: "dollar" },
+    { key: "newPatients", label: "New Patients", type: "int", auto: (i) => npStats[i].totalNP },
+    { key: "closes", label: "Closes", type: "int", auto: (i) => npStats[i].activeClose },
+    { key: "closeRate", label: "Close %", type: "calc", calc: (m, i) => fmtPct(pct(npStats[i].activeClose, npStats[i].totalNP)) },
+    { key: "activeFinish", label: "Active Finish", type: "int" },
+    { key: "activeStickRate", label: "Active Stick Rate", type: "calc", calc: (m, i) => fmtPct(pct(bizReview[i].activeFinish, npStats[i].activeClose)) },
+    { key: "wellnessFinish", label: "Wellness Finish", type: "int", auto: (i) => npStats[i].wellnessClose },
+    { key: "wellnessStickRate", label: "Wellness Stick Rate", type: "calc", calc: (m, i) => fmtPct(pct(npStats[i].wellnessClose, bizReview[i].activeFinish)) },
+    { key: "lifetimeConversion", label: "Lifetime Conversion", type: "int", auto: (i) => npStats[i].lifetimeClose },
+    { key: "inactive", label: "Inactive", type: "int", auto: (i) => npStats[i].inactives },
+    { key: "netMomentum", label: "Net Momentum", type: "calc", calc: (m, i) => fmt(npStats[i].activeClose - npStats[i].inactives) },
+    { key: "pva", label: "PVA", type: "calc", calc: (m, i) => fmt(monthlyTotals[i].np > 0 ? monthlyTotals[i].pv / monthlyTotals[i].np : 0, 1) },
+    { key: "ova", label: "OVA/CVA ($)", type: "calc", calc: (m, i) => fmtDollar(monthlyTotals[i].pv > 0 ? monthlyTotals[i].collections / monthlyTotals[i].pv : 0) },
+    { key: "ltv", label: "LTV ($)", type: "calc", calc: (m, i) => fmtDollar(npStats[i].totalNP > 0 ? monthlyTotals[i].collections / npStats[i].totalNP : 0) },
+    { key: "mktgSpend", label: "MKTG Spend ($)", type: "dollar" },
+    { key: "cpo", label: "CPO/NPC ($)", type: "calc", calc: (m, i) => fmtDollar(npStats[i].totalNP > 0 ? bizReview[i].mktgSpend / npStats[i].totalNP : 0) },
+    { key: "cac", label: "CAC ($)", type: "calc", calc: (m, i) => fmtDollar(npStats[i].activeClose > 0 ? bizReview[i].mktgSpend / npStats[i].activeClose : 0) },
+    { key: "monthlyAutoPays", label: "Monthly Auto Pays", type: "int" },
+    { key: "goal", label: "Monthly Goal ($)", type: "dollar" },
+  ];
+ 
+  return (
+    <div>
+      <div style={{ marginBottom: 20 }}>
+        <h2 style={{ fontSize: 20, fontWeight: 700 }}>Yearly Business Review</h2>
+        <p style={{ color: "#8891aa", fontSize: 13 }}>KPI scorecard — auto-calculated fields shown in blue</p>
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style={{ textAlign: "left", minWidth: 160 }}>Metric</th>
+              {MONTHS.map(m => <th key={m}>{m}</th>)}
+              <th>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(row => (
+              <tr key={row.key}>
+                <td style={{ color: "#c8cfe0", fontWeight: 500 }}>{row.label}</td>
+                {bizReview.map((m, i) => {
+                  if (row.type === "calc") {
+                    return <td key={i} style={{ color: "#4f8ef7" }}>{row.calc(m, i)}</td>;
+                  }
+                  const autoVal = row.auto ? row.auto(i) : null;
+                  const val = autoVal !== null ? autoVal : m[row.key];
+                  if (autoVal !== null) {
+                    return <td key={i} style={{ color: "#a78bfa" }}>{row.type === "dollar" ? fmtDollar(val) : fmt(val)}</td>;
+                  }
+                  return (
+                    <td key={i} style={{ padding: 0 }}>
+                      <input className="cell-input" type="number" value={m[row.key] || ""} placeholder="0"
+                        onChange={e => update(i, row.key, Number(e.target.value))} />
+                    </td>
+                  );
+                })}
+                <td style={{ color: "#fbbf24" }}>
+                  {row.type === "calc" ? "—" :
+                    row.type === "dollar" ? fmtDollar(bizReview.reduce((s, m, i) => s + (row.auto ? row.auto(i) : Number(m[row.key])||0), 0)) :
+                    fmt(bizReview.reduce((s, m, i) => s + (row.auto ? row.auto(i) : Number(m[row.key])||0), 0))
+                  }
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+ 
+// ─── MARKETING ────────────────────────────────────────────────────────────────
+function Marketing({ marketing, setMarketing }) {
+  const updateChannel = (channel, i, field, val) => {
+    setMarketing(prev => ({
+      ...prev,
+      [channel]: prev[channel].map((m, j) => j !== i ? m : { ...m, [field]: val })
+    }));
+  };
+ 
+  const MarketingTable = ({ channel, label }) => {
+    const data = marketing[channel];
+    const totals = data.reduce((acc, m) => {
+      ["spend","collected","leads","np","d2","closes"].forEach(k => acc[k] = (acc[k]||0)+(Number(m[k])||0));
+      return acc;
+    }, {});
+    const inputFields = ["spend","collected","leads","np","d2","closes"];
+    const calcRow = (m) => ({
+      conv: fmtPct(pct(Number(m.closes), Number(m.leads))),
+      cpl: fmtDollar(Number(m.leads) > 0 ? Number(m.spend) / Number(m.leads) : 0),
+      npc: fmtDollar(Number(m.np) > 0 ? Number(m.spend) / Number(m.np) : 0),
+      cac: fmtDollar(Number(m.closes) > 0 ? Number(m.spend) / Number(m.closes) : 0),
+      roas: fmt(Number(m.spend) > 0 ? Number(m.collected) / Number(m.spend) : 0, 2),
+      avg: fmtDollar(Number(m.closes) > 0 ? Number(m.collected) / Number(m.closes) : 0),
+    });
+    return (
+      <div style={{ marginBottom: 28 }}>
+        <div className="section-header">{label}</div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left" }}>Metric</th>
+                {MONTHS.map(m => <th key={m}>{m}</th>)}
+                <th>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {inputFields.map(field => (
+                <tr key={field}>
+                  <td style={{ color: "#c8cfe0" }}>{field.charAt(0).toUpperCase() + field.slice(1)}</td>
+                  {data.map((m, i) => (
+                    <td key={i} style={{ padding: 0 }}>
+                      <input className="cell-input" type="number" value={m[field]||""} placeholder="0"
+                        onChange={e => updateChannel(channel, i, field, e.target.value)} />
+                    </td>
+                  ))}
+                  <td style={{ color: "#fbbf24" }}>
+                    {field==="spend"||field==="collected" ? fmtDollar(totals[field]||0) : fmt(totals[field]||0)}
+                  </td>
+                </tr>
+              ))}
+              {[
+                { key: "conv", label: "Conv %" },
+                { key: "cpl", label: "CPL ($)" },
+                { key: "npc", label: "NPC ($)" },
+                { key: "cac", label: "CAC ($)" },
+                { key: "roas", label: "ROAS" },
+                { key: "avg", label: "Avg Case Value ($)" },
+              ].map(({ key, label: lbl }) => (
+                <tr key={key}>
+                  <td style={{ color: "#4f8ef7" }}>{lbl}</td>
+                  {data.map((m, i) => <td key={i} style={{ color: "#4f8ef7" }}>{calcRow(m)[key]}</td>)}
+                  <td style={{ color: "#4f8ef7" }}>{calcRow(totals)[key]}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+ 
+  return (
+    <div>
+      <div style={{ marginBottom: 20 }}>
+        <h2 style={{ fontSize: 20, fontWeight: 700 }}>Marketing Performance</h2>
+        <p style={{ color: "#8891aa", fontSize: 13 }}>Facebook/Instagram and Google PPC tracking</p>
+      </div>
+      <MarketingTable channel="fb" label="Facebook / Instagram Marketing" />
+      <MarketingTable channel="google" label="Google PPC / LSA Marketing" />
+    </div>
+  );
+}
+ 
+// ─── BONUSES ──────────────────────────────────────────────────────────────────
+function Bonuses({ bonuses, setBonuses, monthlyTotals }) {
+  const updateBaseline = (val) => setBonuses(prev => ({ ...prev, baseline: Number(val) }));
+  const updateTeam = (i, val) => setBonuses(prev => ({ ...prev, team: prev.team.map((m, j) => j !== i ? m : { ...m, collections: Number(val) }) }));
+  const updateDocs = (i, val) => setBonuses(prev => ({ ...prev, docs: prev.docs.map((m, j) => j !== i ? m : { ...m, collections: Number(val) }) }));
+  const updateRefund = (i, field, val) => setBonuses(prev => ({ ...prev, refunds: prev.refunds.map((m, j) => j !== i ? m : { ...m, [field]: val }) }));
+ 
+  const b = bonuses;
+  const teamBonus = (coll) => coll - b.baseline;
+  const teamShare = (coll) => teamBonus(coll) / 3;
+ 
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div>
+          <h2 style={{ fontSize: 20, fontWeight: 700 }}>Bonus Tracker</h2>
+          <p style={{ color: "#8891aa", fontSize: 13 }}>Monthly bonus calculation based on collections vs baseline</p>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <label style={{ color: "#8891aa", fontSize: 13 }}>Baseline: $</label>
+          <input type="number" value={b.baseline} onChange={e => updateBaseline(e.target.value)} style={{ width: 110 }} />
+        </div>
+      </div>
+ 
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 24 }}>
+        {/* Team Bonuses */}
+        <div className="kpi-card">
+          <div className="section-header">Team Bonuses</div>
+          <table>
+            <thead><tr><th style={{ textAlign: "left" }}>Month</th><th>Collections</th><th>12MO Avg</th><th>Bonus</th><th>Per Person (÷3)</th></tr></thead>
+            <tbody>
+              {b.team.map((m, i) => {
+                const coll = Number(m.collections) || monthlyTotals[i].collections;
+                const bonus = teamBonus(coll);
+                const share = teamShare(coll);
+                return (
+                  <tr key={i}>
+                    <td style={{ color: "#c8cfe0" }}>{MONTHS[i]}</td>
+                    <td style={{ padding: 0 }}>
+                      <input className="cell-input" type="number" value={m.collections||""} placeholder={fmt(monthlyTotals[i].collections, 0)}
+                        onChange={e => updateTeam(i, e.target.value)} />
+                    </td>
+                    <td style={{ color: "#8891aa" }}>{fmtDollar(b.baseline)}</td>
+                    <td style={{ color: bonus >= 0 ? "#34d399" : "#f87171" }}>{fmtDollar(bonus)}</td>
+                    <td style={{ color: share >= 0 ? "#a78bfa" : "#f87171" }}>{fmtDollar(share)}</td>
+                  </tr>
+                );
+              })}
+              <tr className="year-row">
+                <td>TOTAL</td>
+                <td style={{ color: "#4f8ef7" }}>{fmtDollar(b.team.reduce((s, m, i) => s + (Number(m.collections)||monthlyTotals[i].collections), 0))}</td>
+                <td>{fmtDollar(b.baseline * 12)}</td>
+                <td style={{ color: "#34d399" }}>{fmtDollar(b.team.reduce((s, m, i) => s + teamBonus(Number(m.collections)||monthlyTotals[i].collections), 0))}</td>
+                <td style={{ color: "#a78bfa" }}>{fmtDollar(b.team.reduce((s, m, i) => s + teamShare(Number(m.collections)||monthlyTotals[i].collections), 0))}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+ 
+        {/* Docs Bonuses */}
+        <div className="kpi-card">
+          <div className="section-header">Doctors Bonuses</div>
+          <table>
+            <thead><tr><th style={{ textAlign: "left" }}>Month</th><th>Collections</th><th>Baseline</th><th>Bonus</th></tr></thead>
+            <tbody>
+              {b.docs.map((m, i) => {
+                const coll = Number(m.collections) || monthlyTotals[i].collections;
+                const bonus = teamBonus(coll);
+                return (
+                  <tr key={i}>
+                    <td style={{ color: "#c8cfe0" }}>{MONTHS[i]}</td>
+                    <td style={{ padding: 0 }}>
+                      <input className="cell-input" type="number" value={m.collections||""} placeholder={fmt(monthlyTotals[i].collections, 0)}
+                        onChange={e => updateDocs(i, e.target.value)} />
+                    </td>
+                    <td style={{ color: "#8891aa" }}>{fmtDollar(b.baseline)}</td>
+                    <td style={{ color: bonus >= 0 ? "#34d399" : "#f87171" }}>{fmtDollar(bonus)}</td>
+                  </tr>
+                );
+              })}
+              <tr className="year-row">
+                <td>TOTAL</td>
+                <td style={{ color: "#4f8ef7" }}>{fmtDollar(b.docs.reduce((s, m, i) => s + (Number(m.collections)||monthlyTotals[i].collections), 0))}</td>
+                <td>{fmtDollar(b.baseline * 12)}</td>
+                <td style={{ color: "#34d399" }}>{fmtDollar(b.docs.reduce((s, m, i) => s + teamBonus(Number(m.collections)||monthlyTotals[i].collections), 0))}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+ 
+      {/* Refunds */}
+      <div className="kpi-card">
+        <div className="section-header">Refunds</div>
+        <table>
+          <thead><tr><th style={{ textAlign: "left" }}>Month</th><th>Total Refund</th><th>Notes</th></tr></thead>
+          <tbody>
+            {b.refunds.map((m, i) => (
+              <tr key={i}>
+                <td style={{ color: "#c8cfe0" }}>{MONTHS[i]}</td>
+                <td style={{ padding: 0 }}><input className="cell-input" type="number" value={m.total||""} placeholder="0" onChange={e => updateRefund(i, "total", e.target.value)} /></td>
+                <td style={{ padding: 0 }}><input value={m.note||""} placeholder="Name & Amount" onChange={e => updateRefund(i, "note", e.target.value)} style={{ textAlign: "left" }} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+ 
+// ─── FRONT DESK ───────────────────────────────────────────────────────────────
+function FrontDesk({ fdWeeks, setFdWeeks }) {
+  const GOALS = { maPct: 0.05, rsPct: 1.0, wiPct: 0.10, keptPct: 0.88 };
+  const [openWeeks, setOpenWeeks] = useState(() => new Set([0]));
+ 
+  const updateDay = useCallback((wi, di, field, val) => {
+    setFdWeeks(prev => prev.map((w, i) => i !== wi ? w : {
+      ...w, days: w.days.map((d, j) => j !== di ? d : { ...d, [field]: val })
+    }));
+  }, [setFdWeeks]);
+ 
+  const GIndicator = ({ val, goal, invert = false }) => {
+    if (val === null || isNaN(val)) return <span style={{ color: "#8891aa" }}>—</span>;
+    const good = invert ? val <= goal : val >= goal;
+    return <span style={{ color: good ? "#34d399" : "#f87171" }}>{fmtPct(val * 100)}</span>;
+  };
+ 
+  return (
+    <div>
+      <div style={{ marginBottom: 20 }}>
+        <h2 style={{ fontSize: 20, fontWeight: 700 }}>Front Desk Stats</h2>
+        <p style={{ color: "#8891aa", fontSize: 13 }}>Goals: MA &lt;5% | RS 100% | Walk-In &lt;10% | % Kept ≥88%</p>
+      </div>
+      <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>
+        {[["MA Goal", "< 5%","#f87171"],["RS Goal","100%","#34d399"],["Walk-In Goal","< 10%","#fbbf24"],["Kept Goal","≥ 88%","#4f8ef7"]].map(([l,v,c]) => (
+          <div key={l} className="kpi-card" style={{ padding: "10px 16px", flex: 1, textAlign: "center" }}>
+            <div style={{ fontSize: 11, color: "#8891aa", textTransform: "uppercase" }}>{l}</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: c }}>{v}</div>
+          </div>
+        ))}
+      </div>
+      {fdWeeks.map((week, wi) => {
+        const isOpen = openWeeks.has(wi);
+        const totSched = week.days.reduce((s,d) => s+(Number(d.schedPV)||0), 0);
+        const totPV = week.days.reduce((s,d) => s+(Number(d.totalPV)||0), 0);
+        const totMA = week.days.reduce((s,d) => s+(Number(d.ma)||0), 0);
+        const totRS = week.days.reduce((s,d) => s+(Number(d.rs)||0), 0);
+        const totWI = week.days.reduce((s,d) => s+(Number(d.wi)||0), 0);
+        return (
+          <div key={wi} style={{ marginBottom: 8, background: "#161922", border: "1px solid #2e3247", borderRadius: 10, overflow: "hidden" }}>
+            <div onClick={() => setOpenWeeks(prev => { const n = new Set(prev); n.has(wi) ? n.delete(wi) : n.add(wi); return n; })}
+              style={{ display: "flex", justifyContent: "space-between", padding: "10px 16px", cursor: "pointer" }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: "#a5b4fc" }}>Week: {week.label}</span>
+              <div style={{ display: "flex", gap: 14, fontSize: 12, color: "#8891aa" }}>
+                <span>Sched {totSched} / PV {totPV}</span>
+                <span style={{ color: "#8891aa" }}>{isOpen ? "▲" : "▼"}</span>
+              </div>
+            </div>
+            {isOpen && (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left" }}>Day</th>
+                      <th>Sched PV</th><th>Total PV</th><th>Total MA</th><th>MA</th><th>MA%</th><th>R/S</th><th>R/S%</th><th>Walk-In</th><th>WI%</th><th>% Kept</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {week.days.map((d, di) => {
+                      const maPct = d.totalPV > 0 ? d.ma / d.totalPV : null;
+                      const rsPct = d.totalPV > 0 ? d.rs / d.totalPV : null;
+                      const wiPct = d.totalPV > 0 ? d.wi / d.totalPV : null;
+                      const kept = d.schedPV > 0 ? d.totalPV / d.schedPV : null;
+                      return (
+                        <tr key={di}>
+                          <td style={{ color: "#c8cfe0" }}>{d.label}</td>
+                          {["schedPV","totalPV","totalMA","ma","rs","wi"].map(f => (
+                            <td key={f} style={{ padding: 0 }}>
+                              <input className="cell-input" type="number" value={d[f]||""} placeholder="0"
+                                onChange={e => updateDay(wi, di, f, e.target.value)} />
+                            </td>
+                          ))}
+                          <td><GIndicator val={maPct} goal={GOALS.maPct} invert /></td>
+                          <td><GIndicator val={rsPct} goal={GOALS.rsPct} /></td>
+                          <td><GIndicator val={wiPct} goal={GOALS.wiPct} invert /></td>
+                          <td><GIndicator val={kept} goal={GOALS.keptPct} /></td>
+                        </tr>
+                      );
+                    })}
+                    <tr className="week-total">
+                      <td>Weekly Total</td>
+                      <td>{totSched}</td><td>{totPV}</td><td>{totMA}</td><td>{totMA}</td>
+                      <td><GIndicator val={totPV > 0 ? totMA/totPV : null} goal={GOALS.maPct} invert /></td>
+                      <td>{totRS}</td>
+                      <td><GIndicator val={totPV > 0 ? totRS/totPV : null} goal={GOALS.rsPct} /></td>
+                      <td>{totWI}</td>
+                      <td><GIndicator val={totPV > 0 ? totWI/totPV : null} goal={GOALS.wiPct} invert /></td>
+                      <td><GIndicator val={totSched > 0 ? totPV/totSched : null} goal={GOALS.keptPct} /></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+ 
+// ─── SUPPLEMENTS ──────────────────────────────────────────────────────────────
+function Supplements({ supplements, setSupplements }) {
+  const update = (i, field, val) => {
+    setSupplements(prev => prev.map((m, j) => j !== i ? m : { ...m, [field]: val }));
+  };
+  const quarters = [[0,1,2],[3,4,5],[6,7,8],[9,10,11]];
+  const suppTotal = supplements.reduce((s, m) => s+(Number(m.supplements)||0), 0);
+  const taxTotal = supplements.reduce((s, m) => s+(Number(m.salesTax)||0), 0);
+ 
+  return (
+    <div>
+      <div style={{ marginBottom: 20 }}>
+        <h2 style={{ fontSize: 20, fontWeight: 700 }}>Supplements</h2>
+        <p style={{ color: "#8891aa", fontSize: 13 }}>Monthly supplement sales and sales tax tracking</p>
+      </div>
+      <div style={{ display: "flex", gap: 14, marginBottom: 24 }}>
+        <div className="kpi-card" style={{ flex: 1 }}>
+          <div style={{ fontSize: 11, color: "#8891aa", textTransform: "uppercase" }}>YTD Supplements</div>
+          <div style={{ fontSize: 28, fontWeight: 700, color: "#34d399", marginTop: 6 }}>{fmtDollar(suppTotal)}</div>
+        </div>
+        <div className="kpi-card" style={{ flex: 1 }}>
+          <div style={{ fontSize: 11, color: "#8891aa", textTransform: "uppercase" }}>YTD Sales Tax</div>
+          <div style={{ fontSize: 28, fontWeight: 700, color: "#fbbf24", marginTop: 6 }}>{fmtDollar(taxTotal)}</div>
+        </div>
+        <div className="kpi-card" style={{ flex: 1 }}>
+          <div style={{ fontSize: 11, color: "#8891aa", textTransform: "uppercase" }}>Total (incl. tax)</div>
+          <div style={{ fontSize: 28, fontWeight: 700, color: "#4f8ef7", marginTop: 6 }}>{fmtDollar(suppTotal + taxTotal)}</div>
+        </div>
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th style={{ textAlign: "left" }}>Month</th><th>Supplements ($)</th><th>Sales Tax ($)</th><th>Total</th></tr></thead>
+          <tbody>
+            {quarters.map((q, qi) => (
+              <>
+                {q.map(i => (
+                  <tr key={i}>
+                    <td style={{ color: "#c8cfe0" }}>{MONTH_NAMES[i]}</td>
+                    <td style={{ padding: 0 }}><input className="cell-input" type="number" value={supplements[i].supplements||""} placeholder="0" onChange={e => update(i, "supplements", e.target.value)} /></td>
+                    <td style={{ padding: 0 }}><input className="cell-input" type="number" value={supplements[i].salesTax||""} placeholder="0" onChange={e => update(i, "salesTax", e.target.value)} /></td>
+                    <td style={{ color: "#4f8ef7" }}>{fmtDollar((Number(supplements[i].supplements)||0)+(Number(supplements[i].salesTax)||0))}</td>
+                  </tr>
+                ))}
+                <tr className="quarter-row">
+                  <td>Q{qi+1} Total</td>
+                  <td>{fmtDollar(q.reduce((s,i)=>s+(Number(supplements[i].supplements)||0),0))}</td>
+                  <td>{fmtDollar(q.reduce((s,i)=>s+(Number(supplements[i].salesTax)||0),0))}</td>
+                  <td>{fmtDollar(q.reduce((s,i)=>s+(Number(supplements[i].supplements)||0)+(Number(supplements[i].salesTax)||0),0))}</td>
+                </tr>
+              </>
+            ))}
+            <tr className="year-row">
+              <td>YEARLY TOTALS</td>
+              <td style={{ color: "#4f8ef7" }}>{fmtDollar(suppTotal)}</td>
+              <td style={{ color: "#4f8ef7" }}>{fmtDollar(taxTotal)}</td>
+              <td style={{ color: "#4f8ef7" }}>{fmtDollar(suppTotal + taxTotal)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+ 
+// ─── EVEREST STATS ────────────────────────────────────────────────────────────
+function EverestStats({ everest2026, setEverest2026 }) {
+  const update2026 = (field, val) => setEverest2026(prev => ({ ...prev, [field]: Number(val) }));
+  const allYears = [{ year: 2026, ...everest2026 }, ...EVEREST_HISTORY];
+ 
+  return (
+    <div>
+      <div style={{ marginBottom: 20 }}>
+        <h2 style={{ fontSize: 20, fontWeight: 700 }}>Everest Historical Stats</h2>
+        <p style={{ color: "#8891aa", fontSize: 13 }}>2026 is editable; prior years are historical read-only reference</p>
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style={{ textAlign: "left" }}>Year</th>
+              <th>PV</th><th>NP</th><th>MA</th><th>RS</th>
+              <th>Services</th><th>Checks</th><th>Cash</th><th>CC</th><th>Insurance</th><th>PI/WC</th>
+              <th>Collections</th><th>OVA</th>
+            </tr>
+          </thead>
+          <tbody>
+            {allYears.map((y, idx) => {
+              const isEdit = y.year === 2026;
+              const ova = y.pv > 0 ? y.collections / y.pv : 0;
+              return (
+                <tr key={y.year} style={{ background: isEdit ? "#1a2540" : undefined }}>
+                  <td style={{ color: isEdit ? "#4f8ef7" : "#c8cfe0", fontWeight: isEdit ? 700 : 400 }}>
+                    {y.year} {isEdit && <span style={{ fontSize: 10, color: "#4f8ef7" }}>▶ EDIT</span>}
+                  </td>
+                  {["pv","np","ma","rs"].map(f => (
+                    <td key={f} style={{ padding: isEdit ? 0 : undefined }}>
+                      {isEdit
+                        ? <input className="cell-input" type="number" value={everest2026[f]||""} placeholder="0" onChange={e => update2026(f, e.target.value)} />
+                        : fmt(y[f])}
+                    </td>
+                  ))}
+                  {["services","checks","cash","cc","ins","pi","collections"].map(f => (
+                    <td key={f} style={{ padding: isEdit ? 0 : undefined, color: f === "collections" ? "#4f8ef7" : undefined }}>
+                      {isEdit
+                        ? <input className="cell-input" type="number" value={everest2026[f]||""} placeholder="0" onChange={e => update2026(f, e.target.value)} />
+                        : fmtDollar(y[f]||0)}
+                    </td>
+                  ))}
+                  <td style={{ color: "#a78bfa" }}>{fmtDollar(ova)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+ 
+      {/* Historical analysis */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginTop: 24 }}>
+        <div className="kpi-card">
+          <div className="section-header">Collections Growth</div>
+          {EVEREST_HISTORY.slice(0, 8).map((y, i) => {
+            const prev = EVEREST_HISTORY[i + 1];
+            const growth = prev ? ((y.collections - prev.collections) / prev.collections) * 100 : null;
+            return (
+              <div key={y.year} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "4px 0", borderBottom: "1px solid #1e2130" }}>
+                <span style={{ color: "#c8cfe0" }}>{y.year}</span>
+                <span style={{ fontFamily: "'DM Mono', monospace" }}>{fmtDollar(y.collections)}</span>
+                {growth !== null && <span style={{ color: growth >= 0 ? "#34d399" : "#f87171", fontSize: 11 }}>{growth >= 0 ? "+" : ""}{growth.toFixed(1)}%</span>}
+              </div>
+            );
+          })}
+        </div>
+        <div className="kpi-card">
+          <div className="section-header">Office Visit Average</div>
+          {EVEREST_HISTORY.slice(0, 8).map(y => (
+            <div key={y.year} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "4px 0", borderBottom: "1px solid #1e2130" }}>
+              <span style={{ color: "#c8cfe0" }}>{y.year}</span>
+              <span style={{ color: "#a78bfa", fontFamily: "'DM Mono', monospace" }}>{fmtDollar(y.pv > 0 ? y.collections / y.pv : 0)}</span>
+            </div>
+          ))}
+        </div>
+        <div className="kpi-card">
+          <div className="section-header">PVA (PV ÷ NP)</div>
+          {EVEREST_HISTORY.slice(0, 8).map(y => (
+            <div key={y.year} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "4px 0", borderBottom: "1px solid #1e2130" }}>
+              <span style={{ color: "#c8cfe0" }}>{y.year}</span>
+              <span style={{ color: "#fbbf24", fontFamily: "'DM Mono', monospace" }}>{fmt(y.np > 0 ? y.pv / y.np : 0, 1)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+ 
+ 
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
 </html>
