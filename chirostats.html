@@ -218,27 +218,16 @@ function App() {
     }).catch(() => setLoaded(true));
   }, []);
 
-  // Plain setter factories — no hooks inside
-  const persist = (rawSetter, fieldName) => (updater) => {
-    rawSetter(prev => {
-      const next = typeof updater === "function" ? updater(prev) : updater;
-      clearTimeout(saveTimers.current[fieldName]);
-      saveTimers.current[fieldName] = setTimeout(() => saveField(fieldName, next), 800);
-      setSaveFlash(true);
-      setTimeout(() => setSaveFlash(false), 1800);
-      return next;
-    });
-  };
-
-  const setDailyWeeks  = persist(setDailyWeeksRaw,  "dailyWeeks");
-  const setMonthlyNP   = persist(setMonthlyNPRaw,   "monthlyNP");
-  const setMarketing   = persist(setMarketingRaw,   "marketing");
-  const setBizReview   = persist(setBizReviewRaw,   "bizReview");
-  const setBonuses     = persist(setBonusesRaw,     "bonuses");
-  const setFdWeeks     = persist(setFdWeeksRaw,     "fdWeeks");
-  const setSupplements = persist(setSupplementsRaw, "supplements");
-  const setEverest2026 = persist(setEverest2026Raw, "everest2026");
-  const setNpMonth     = persist(setNpMonthRaw,     "npMonth");
+  // Stable setter refs — created once, never change between renders
+  const setDailyWeeks  = useCallback((u) => { setDailyWeeksRaw(p => { const n = typeof u==="function"?u(p):u; clearTimeout(saveTimers.current.dailyWeeks);  saveTimers.current.dailyWeeks  = setTimeout(()=>saveField("dailyWeeks",n),800);  setSaveFlash(true); setTimeout(()=>setSaveFlash(false),1800); return n; }); }, []);
+  const setMonthlyNP   = useCallback((u) => { setMonthlyNPRaw(p  => { const n = typeof u==="function"?u(p):u; clearTimeout(saveTimers.current.monthlyNP);   saveTimers.current.monthlyNP   = setTimeout(()=>saveField("monthlyNP",n),800);   setSaveFlash(true); setTimeout(()=>setSaveFlash(false),1800); return n; }); }, []);
+  const setMarketing   = useCallback((u) => { setMarketingRaw(p  => { const n = typeof u==="function"?u(p):u; clearTimeout(saveTimers.current.marketing);   saveTimers.current.marketing   = setTimeout(()=>saveField("marketing",n),800);   setSaveFlash(true); setTimeout(()=>setSaveFlash(false),1800); return n; }); }, []);
+  const setBizReview   = useCallback((u) => { setBizReviewRaw(p  => { const n = typeof u==="function"?u(p):u; clearTimeout(saveTimers.current.bizReview);   saveTimers.current.bizReview   = setTimeout(()=>saveField("bizReview",n),800);   setSaveFlash(true); setTimeout(()=>setSaveFlash(false),1800); return n; }); }, []);
+  const setBonuses     = useCallback((u) => { setBonusesRaw(p    => { const n = typeof u==="function"?u(p):u; clearTimeout(saveTimers.current.bonuses);     saveTimers.current.bonuses     = setTimeout(()=>saveField("bonuses",n),800);     setSaveFlash(true); setTimeout(()=>setSaveFlash(false),1800); return n; }); }, []);
+  const setFdWeeks     = useCallback((u) => { setFdWeeksRaw(p    => { const n = typeof u==="function"?u(p):u; clearTimeout(saveTimers.current.fdWeeks);     saveTimers.current.fdWeeks     = setTimeout(()=>saveField("fdWeeks",n),800);     setSaveFlash(true); setTimeout(()=>setSaveFlash(false),1800); return n; }); }, []);
+  const setSupplements = useCallback((u) => { setSupplementsRaw(p=> { const n = typeof u==="function"?u(p):u; clearTimeout(saveTimers.current.supplements); saveTimers.current.supplements = setTimeout(()=>saveField("supplements",n),800); setSaveFlash(true); setTimeout(()=>setSaveFlash(false),1800); return n; }); }, []);
+  const setEverest2026 = useCallback((u) => { setEverest2026Raw(p=> { const n = typeof u==="function"?u(p):u; clearTimeout(saveTimers.current.everest2026); saveTimers.current.everest2026 = setTimeout(()=>saveField("everest2026",n),800); setSaveFlash(true); setTimeout(()=>setSaveFlash(false),1800); return n; }); }, []);
+  const setNpMonth     = useCallback((u) => { setNpMonthRaw(p    => { const n = typeof u==="function"?u(p):u; clearTimeout(saveTimers.current.npMonth);     saveTimers.current.npMonth     = setTimeout(()=>saveField("npMonth",n),800);     setSaveFlash(true); setTimeout(()=>setSaveFlash(false),1800); return n; }); }, []);
 
   const handleReset = () => {
     if (!window.confirm("Reset ALL data? This cannot be undone.")) return;
