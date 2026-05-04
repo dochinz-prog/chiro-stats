@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ChiroStats — Daily Entry</title>
+</head>
+<body style="margin:0;padding:0;background:#0f1117;">
+  <div id="root"></div>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script type="text/babel">
+    const { useState, useCallback } = React;
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBDFXvDT8gbadUob5aH8d68ZcMShsWt_EE",
+      authDomain: "chirostats-6c3a2.firebaseapp.com",
+      projectId: "chirostats-6c3a2",
+      storageBucket: "chirostats-6c3a2.firebasestorage.app",
+      messagingSenderId: "602082979448",
+      appId: "1:602082979448:web:2f524c8689d49b0803878d",
+    };
+    const fbApp = firebase.initializeApp(firebaseConfig);
+    const db = fbApp.firestore();
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    function today() {
+      return new Date().toISOString().split("T")[0];
+    }
+    function formatDate(d) {
+      if (!d) return "";
+      return new Date(d + "T00:00:00").toLocaleDateString("en-US", { weekday:"long", month:"long", day:"numeric", year:"numeric" });
+    }
+
+    // ── PDF TEXT EXTRACTOR ──────────────────────────────────────────────────
+    async function extractPDFText(file) {
+      const buf = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+      let text = "";
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        text += content.items.map(item => item.str).join(" ") + "\n";
+      }
+      return text;
+    }
+
+    // ── COLLECTIONS PDF PARSER ──────────────────────────────────────────────
+    function parseCollections(text) {
+      function getAmount(label) {
+        // Match label followed by number somewhere nearby
+        const re = new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + '[^\\d]*([\\d,]+\\.?\\d*)', 'i');
+        const m = text.match(re);
+        if (!m) return 0;
+        return parseFloat(m[1].replace(/,/g, '')) || 0;
+      }
+      const amex     = getAmount('American Express');
+      const discover = getAmount('Discover');
+      const mc       = getAmount('MasterCard');
+      const visa     = getAmount('Visa');
+      const cash     = getAmount('Cash');
+      const check    = getAmount('Check');
+      const acheft   = getAmount('ACH / EFT');
+      const inschk   = getAmount('Insurance Check');
+      // Refund — must be in the REFUNDS section only, before CREDITS AND WRITE OFFS
+      let refund = 0;
+      const refundSection = text.match(/REFUNDS([\s\S]*?)CREDITS AND WRITE OFFS/i);
+      if (refundSection) {
+        const refundText = refundSection[1];
+        const refundTotal = refundText.match(/Total\s+([\d,]+\.?\d*)/i);
+        if (refundTotal && refundTotal[1] !== '---') {
+          refund = parseFloat(refundTotal[1].replace(/,/g,'')) || 0;
+        }
+      }
+      return {
+        cc:      amex + discover + mc + visa,
+        cash:    cash,
+        checks:  check,
+        ins:     acheft + inschk,
+        refund:  refund,
+      };
+    }
+
+    // ── APPOINTMENTS PDF PARSER ─────────────────────────────────────────────
+    function parseAppointments(text) {
+      // CPT code counts — find "CODE ... Count" column
+      function getCPTCount(code) {
+        // pattern: code name ... number number number
+        const re = new RegExp(code + '\\s+[\\w\\s/]+?\\s+(\\d+)\\s+', 'i');
+        const m = text.match(re);
+        return m ? parseInt(m[1]) || 0 : 0;
+      }
+      function getNamedCount(name) {
+        const re = new RegExp(name + '\\s+(\\d+)\\s+', 'i');
+        const m = text.match(re);
+        return m ? parseInt(m[1]) || 0 : 0;
+      }
+      function getStat(label) {
+        const re = new RegExp(label + '\\s+(\\d+)', 'i');
+        const m = text.match(re);
+        return m ? parseInt(m[1]) || 0 : 0;
+      }
+      function getGrossTotal() {
+        // Strip inventory section before finding gross total
+        // Pattern: services Total ... [INVENTORY SECTION] ... Net Total
+        let cleanText = text;
+        const invIdx = text.search(/SUMMARY OF INVENTORY SALES/i);
+        if (invIdx > -1) {
+          const netIdx = text.search(/Net Total/i);
+          if (netIdx > invIdx) {
+            cleanText = text.substring(0, invIdx) + text.substring(netIdx);
+          }
+        }
+        // Gross total is the dollar amount immediately before "Net Total"
+        const m = cleanText.match(/([\d,]+\.\d{2})\s*Net Total/i);
+        if (m) return parseFloat(m[1].replace(/,/g,"")) || 0;
+        return 0;
+      }
+
+      // Decompression — count first so we can subtract from adjustments
+      const decomp      = getNamedCount('Decompression');
+      const trialDecomp = getNamedCount('Trial Decompression');
+      const totalDecomp = decomp + trialDecomp;
+
+      // Softwave
+      const softwave = getCPTCount('0101T');
+
+      // NP CPTs
+      const np99202 = getCPTCount('99202');
+      const np99203 = getCPTCount('99203');
+      const np99204 = getCPTCount('99204');
+      const np99205 = getCPTCount('99205');
+      const np = np99202 + np99203 + np99204 + np99205;
+
+      // Adjustments — scan tokens using CPT codes directly
+      // Use S8990 for Wellness Adjustment (not the name which has spaces)
+      const tokens = text.split(/\s+/);
+      let adj98940 = 0, adj98941 = 0, adj98942 = 0, wellAdj = 0;
+
+      function getCountAfter(i) {
+        for (let j = i; j < Math.min(i + 10, tokens.length); j++) {
+          if (/^\d+$/.test(tokens[j])) return parseInt(tokens[j]);
+        }
+        return 0;
+      }
+
+      for (let i = 0; i < tokens.length; i++) {
+        if (tokens[i] === '98940') adj98940 += getCountAfter(i + 1);
+        if (tokens[i] === '98941') adj98941 += getCountAfter(i + 1);
+        if (tokens[i] === '98942') adj98942 += getCountAfter(i + 1);
+        if (tokens[i] === 'S8990') wellAdj   += getCountAfter(i + 1);
+      }
+
+      // Adjustments = (98940 + 98941 + 98942 + S8990) - Decompression
+      const adjTotal = (adj98940 + adj98941 + adj98942 + wellAdj) - totalDecomp;
+
+      // Appointment stats
+      const scheduled = getStat('Total Scheduled');
+      const ma        = getStat('Missed');
+      const rs        = getStat('Rescheduled');
+      const wi        = getStat('Walk-in');
+      const services  = getGrossTotal();
+
+      return {
+        scheduled,
+        pv:         adjTotal + totalDecomp + softwave,
+        adjustments: adjTotal,
+        decompression: totalDecomp,
+        softwave,
+        np,
+        ma,
+        rs,
+        wi,
+        services,
+      };
+    }
+
+    // ── FIELD CONFIG ────────────────────────────────────────────────────────
+    const VISIT_FIELDS = [
+      { key:"scheduled",    label:"Scheduled",          icon:"📋", color:"#a78bfa" },
+      { key:"pv",           label:"Total Patient Visits",icon:"🧑‍⚕️", color:"#4f8ef7" },
+      { key:"adjustments",  label:"Adjustments",         icon:"🦴", color:"#60a5fa" },
+      { key:"decompression",label:"Decompression",       icon:"🔧", color:"#34d399" },
+      { key:"softwave",     label:"Softwave",            icon:"〰️", color:"#e879f9" },
+      { key:"np",           label:"New Patients",        icon:"✨", color:"#34d399" },
+      { key:"ma",           label:"Missed Appts",        icon:"📵", color:"#f87171" },
+      { key:"rs",           label:"Rescheduled",         icon:"🔄", color:"#fbbf24" },
+      { key:"wi",           label:"Walk-Ins",            icon:"🚶", color:"#fb923c" },
+      { key:"services",     label:"Services $",          icon:"💼", color:"#4f8ef7", dollar:true },
+    ];
+    const COLLECTION_FIELDS = [
+      { key:"cc",     label:"Credit Card $",  icon:"💳", color:"#4f8ef7",  dollar:true },
+      { key:"cash",   label:"Cash $",         icon:"💵", color:"#34d399",  dollar:true },
+      { key:"checks", label:"Checks $",       icon:"📝", color:"#a78bfa",  dollar:true },
+      { key:"ins",    label:"Insurance $",    icon:"🏥", color:"#fb923c",  dollar:true },
+      { key:"refund", label:"Refunds $",      icon:"↩️", color:"#f87171",  dollar:true },
+    ];
+
+    // ── MAIN APP ────────────────────────────────────────────────────────────
+    function App() {
+      const [date, setDate] = useState(today());
+      const [values, setValues] = useState({});
+      const [apptFile, setApptFile]  = useState(null);
+      const [collFile, setCollFile]  = useState(null);
+      const [apptParsing, setApptParsing] = useState(false);
+      const [collParsing, setCollParsing] = useState(false);
+      const [apptDone,    setApptDone]    = useState(false);
+      const [collDone,    setCollDone]    = useState(false);
+      const [submitting,  setSubmitting]  = useState(false);
+      const [submitted,   setSubmitted]   = useState(false);
+      const [error,       setError]       = useState("");
+
+      const set = (key, val) => setValues(prev => ({ ...prev, [key]: val }));
+
+      const collections = (Number(values.cc)||0) + (Number(values.cash)||0) + (Number(values.checks)||0) + (Number(values.ins)||0);
+
+      async function handleApptPDF(file) {
+        setApptFile(file); setApptParsing(true); setError("");
+        try {
+          const text = await extractPDFText(file);
+          const parsed = parseAppointments(text);
+          setValues(prev => ({ ...prev, ...parsed }));
+          setApptDone(true);
+        } catch(e) { setError("Could not read appointments PDF: " + e.message); }
+        setApptParsing(false);
+      }
+
+      async function handleCollPDF(file) {
+        setCollFile(file); setCollParsing(true); setError("");
+        try {
+          const text = await extractPDFText(file);
+          const parsed = parseCollections(text);
+          setValues(prev => ({ ...prev, ...parsed }));
+          setCollDone(true);
+        } catch(e) { setError("Could not read collections PDF. Please check the file."); }
+        setCollParsing(false);
+      }
+
+      async function handleSubmit() {
+        setSubmitting(true); setError("");
+        try {
+          // Generate full 2026 business days (same logic as main app)
+          function gen2026Days() {
+            const weeks = [];
+            let cur = new Date(2026, 0, 1);
+            while (cur.getFullYear() === 2026) {
+              const weekDays = [];
+              const weekStart = new Date(cur);
+              while (weekDays.length < 5 && cur.getFullYear() === 2026) {
+                const dow = cur.getDay();
+                if (dow !== 0 && dow !== 6) {
+                  weekDays.push({
+                    date: cur.toISOString(),
+                    label: `${cur.getMonth()+1}/${cur.getDate()}`,
+                    month: cur.getMonth(),
+                    scheduled:0,pv:0,adjustments:0,decompression:0,softwave:0,
+                    np:0,mnp:0,ma:0,rs:0,wi:0,services:0,checks:0,cash:0,cc:0,ins:0,pi:0,supplements:0
+                  });
+                }
+                cur.setDate(cur.getDate() + 1);
+                if (cur.getDay() === 1 && weekDays.length > 0) break;
+              }
+              if (weekDays.length > 0) {
+                const we = weekDays[weekDays.length-1];
+                const wl = weekDays[0];
+                weeks.push({
+                  label: `${wl.month+1}/${wl.label.split('/')[1]}-${we.month+1}/${we.label.split('/')[1]}`,
+                  days: weekDays
+                });
+              }
+            }
+            return weeks;
+          }
+
+          const docRef = db.collection("chiro2026").doc("2026");
+          const snap = await docRef.get();
+          const data = snap.exists ? snap.data() : {};
+
+          // Use saved weeks or generate fresh ones
+          let weeks = (data.dailyWeeks && data.dailyWeeks.length > 0) ? data.dailyWeeks : gen2026Days();
+
+          // Find matching day by label
+          const [yr, mo, dy] = date.split("-").map(Number);
+          const label = `${mo}/${dy}`;
+          let found = false;
+
+          weeks = weeks.map(week => ({
+            ...week,
+            days: week.days.map(day => {
+              if (day.label === label) {
+                found = true;
+                return {
+                  ...day,
+                  scheduled:    Number(values.scheduled)    || 0,
+                  pv:           Number(values.pv)           || 0,
+                  adjustments:  Number(values.adjustments)  || 0,
+                  decompression:Number(values.decompression)|| 0,
+                  softwave:     Number(values.softwave)     || 0,
+                  np:           Number(values.np)           || 0,
+                  ma:           Number(values.ma)           || 0,
+                  rs:           Number(values.rs)           || 0,
+                  wi:           Number(values.wi)           || 0,
+                  services:     Number(values.services)     || 0,
+                  cc:           Number(values.cc)           || 0,
+                  cash:         Number(values.cash)         || 0,
+                  checks:       Number(values.checks)       || 0,
+                  ins:          Number(values.ins)          || 0,
+                };
+              }
+              return day;
+            })
+          }));
+
+          if (!found) { setError(`Could not find ${label} in the schedule. Date not in 2026 calendar.`); setSubmitting(false); return; }
+
+          await docRef.set({ dailyWeeks: weeks }, { merge: true });
+
+          // Save refund to bonuses if present
+          if (Number(values.refund) > 0) {
+            const monthIndex = mo - 1;
+            const bonuses = data.bonuses || { baseline: 80000, team: [], docs: [], refunds: Array(12).fill({month:"",total:0,note:""}) };
+            if (bonuses.refunds && bonuses.refunds[monthIndex] !== undefined) {
+              bonuses.refunds[monthIndex] = {
+                ...bonuses.refunds[monthIndex],
+                total: (Number(bonuses.refunds[monthIndex].total)||0) + Number(values.refund),
+                note: bonuses.refunds[monthIndex].note ? bonuses.refunds[monthIndex].note + `, +$${values.refund}` : `$${values.refund}`
+              };
+              await docRef.set({ bonuses }, { merge: true });
+            }
+          }
+
+          setSubmitted(true);
+        } catch(e) {
+          setError("Error saving to database: " + e.message);
+        }
+        setSubmitting(false);
+      }
+
+      function handleReset() {
+        setValues({}); setDate(today());
+        setApptFile(null); setCollFile(null);
+        setApptDone(false); setCollDone(false);
+        setSubmitted(false); setError("");
+      }
+
+      // ── SUBMITTED SCREEN ────────────────────────────────────────────────
+      if (submitted) return (
+        <div style={{fontFamily:"'DM Sans',sans-serif",background:"#0f1117",minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,color:"#e8eaf0"}}>
+          <div style={{fontSize:64,marginBottom:16}}>✅</div>
+          <h1 style={{fontSize:24,fontWeight:700,marginBottom:8,color:"#34d399"}}>Stats Submitted!</h1>
+          <p style={{color:"#8891aa",marginBottom:4,fontSize:15}}>{formatDate(date)}</p>
+          <p style={{color:"#8891aa",marginBottom:32,fontSize:13}}>Data saved to the dashboard.</p>
+          <div style={{background:"#161922",border:"1px solid #2e3247",borderRadius:16,padding:24,width:"100%",maxWidth:360,marginBottom:24}}>
+            <div style={{fontSize:11,color:"#8891aa",textTransform:"uppercase",letterSpacing:".08em",marginBottom:12}}>Summary</div>
+            {[...VISIT_FIELDS,...COLLECTION_FIELDS].filter(f=>Number(values[f.key])>0).map(f=>(
+              <div key={f.key} style={{display:"flex",justifyContent:"space-between",fontSize:14,padding:"6px 0",borderBottom:"1px solid #1e2130"}}>
+                <span style={{color:"#8891aa"}}>{f.label}</span>
+                <span style={{color:f.color,fontWeight:600}}>{f.dollar?`$${Number(values[f.key]).toLocaleString("en-US",{minimumFractionDigits:2})}`:values[f.key]}</span>
+              </div>
+            ))}
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:15,padding:"10px 0 0",fontWeight:700}}>
+              <span style={{color:"#8891aa"}}>Total Collections</span>
+              <span style={{color:"#4f8ef7"}}>${collections.toLocaleString("en-US",{minimumFractionDigits:2})}</span>
+            </div>
+          </div>
+          <button onClick={handleReset} style={{background:"#4f8ef7",color:"white",border:"none",borderRadius:12,padding:"14px 32px",fontSize:16,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Enter Another Day</button>
+        </div>
+      );
+
+      // ── MAIN FORM ───────────────────────────────────────────────────────
+      return (
+        <div style={{fontFamily:"'DM Sans',sans-serif",background:"#0f1117",minHeight:"100vh",color:"#e8eaf0"}}>
+          {/* Header */}
+          <div style={{background:"#0d0f18",borderBottom:"1px solid #1e2130",padding:"16px 20px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <div style={{width:32,height:32,background:"linear-gradient(135deg,#4f8ef7,#a78bfa)",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>⬡</div>
+              <div>
+                <div style={{fontWeight:700,fontSize:15}}>ChiroStats <span style={{color:"#4f8ef7"}}>2026</span></div>
+                <div style={{fontSize:11,color:"#8891aa"}}>Daily Entry</div>
+              </div>
+            </div>
+            <div style={{fontSize:12,color:"#8891aa"}}>Staff Portal</div>
+          </div>
+
+          <div style={{maxWidth:500,margin:"0 auto",padding:"24px 16px 80px"}}>
+
+            {/* Error */}
+            {error && <div style={{background:"#3a1a1a",border:"1px solid #7f1d1d",borderRadius:12,padding:"12px 16px",marginBottom:16,color:"#f87171",fontSize:14}}>{error}</div>}
+
+            {/* Date */}
+            <div style={{background:"#161922",border:"1px solid #2e3247",borderRadius:16,padding:20,marginBottom:16}}>
+              <div style={{fontSize:11,color:"#8891aa",textTransform:"uppercase",letterSpacing:".08em",marginBottom:8}}>Date</div>
+              <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{background:"#0f1117",border:"1px solid #2e3247",color:"#e8eaf0",borderRadius:10,padding:"12px 16px",fontSize:16,fontFamily:"inherit",width:"100%",outline:"none"}}/>
+              {date&&<div style={{fontSize:13,color:"#4f8ef7",marginTop:8}}>{formatDate(date)}</div>}
+            </div>
+
+            {/* PDF Uploads */}
+            <div style={{fontSize:11,color:"#8891aa",textTransform:"uppercase",letterSpacing:".08em",marginBottom:10,paddingLeft:4}}>Upload Reports</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
+              {/* Appointments PDF */}
+              <label style={{cursor:"pointer"}}>
+                <input type="file" accept=".pdf" style={{display:"none"}} onChange={e=>e.target.files[0]&&handleApptPDF(e.target.files[0])}/>
+                <div style={{background: apptDone?"#1a3a1a":"#161922",border:`2px dashed ${apptDone?"#34d399":"#2e3247"}`,borderRadius:16,padding:"20px 12px",textAlign:"center",transition:"all 0.2s"}}>
+                  <div style={{fontSize:28,marginBottom:8}}>{apptParsing?"⏳":apptDone?"✅":"📅"}</div>
+                  <div style={{fontSize:13,fontWeight:600,color:apptDone?"#34d399":"#c8cfe0",marginBottom:4}}>
+                    {apptParsing?"Reading...":apptDone?"Appointments ✓":"Appointments PDF"}
+                  </div>
+                  <div style={{fontSize:11,color:"#8891aa"}}>{apptDone?apptFile?.name:"Day Summary report"}</div>
+                </div>
+              </label>
+              {/* Collections PDF */}
+              <label style={{cursor:"pointer"}}>
+                <input type="file" accept=".pdf" style={{display:"none"}} onChange={e=>e.target.files[0]&&handleCollPDF(e.target.files[0])}/>
+                <div style={{background:collDone?"#1a3a1a":"#161922",border:`2px dashed ${collDone?"#34d399":"#2e3247"}`,borderRadius:16,padding:"20px 12px",textAlign:"center",transition:"all 0.2s"}}>
+                  <div style={{fontSize:28,marginBottom:8}}>{collParsing?"⏳":collDone?"✅":"💰"}</div>
+                  <div style={{fontSize:13,fontWeight:600,color:collDone?"#34d399":"#c8cfe0",marginBottom:4}}>
+                    {collParsing?"Reading...":collDone?"Collections ✓":"Collections PDF"}
+                  </div>
+                  <div style={{fontSize:11,color:"#8891aa"}}>{collDone?collFile?.name:"Cash Summary report"}</div>
+                </div>
+              </label>
+            </div>
+
+            {/* Visit Fields */}
+            <div style={{fontSize:11,color:"#8891aa",textTransform:"uppercase",letterSpacing:".08em",marginBottom:10,paddingLeft:4}}>Visit Numbers</div>
+            <div style={{background:"#161922",border:"1px solid #2e3247",borderRadius:16,overflow:"hidden",marginBottom:16}}>
+              {VISIT_FIELDS.map((f,i,arr)=>(
+                <div key={f.key} style={{display:"flex",alignItems:"center",padding:"13px 20px",borderBottom:i<arr.length-1?"1px solid #1e2130":"none",background:values[f.key]?"#161922":"transparent"}}>
+                  <div style={{fontSize:20,width:36}}>{f.icon}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:14,color:"#c8cfe0",fontWeight:500}}>{f.label}</div>
+                    {f.key==="pv"&&(Number(values.adjustments)||0)+(Number(values.decompression)||0)+(Number(values.softwave)||0)>0&&(
+                      <div style={{fontSize:11,color:"#8891aa",marginTop:2}}>Adj {values.adjustments||0} + Decomp {values.decompression||0} + SW {values.softwave||0}</div>
+                    )}
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:4}}>
+                    {f.dollar&&<span style={{color:"#8891aa",fontSize:16}}>$</span>}
+                    <input type="number" min="0" step={f.dollar?"0.01":"1"} value={values[f.key]||""} onChange={e=>set(f.key,e.target.value)} placeholder="0"
+                      style={{background:"#0f1117",border:`1px solid ${values[f.key]?"#4f8ef7":"#2e3247"}`,color:f.color,borderRadius:10,padding:"10px 14px",fontSize:17,fontWeight:700,fontFamily:"inherit",width:f.dollar?120:90,textAlign:"center",outline:"none"}}/>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Collection Fields */}
+            <div style={{fontSize:11,color:"#8891aa",textTransform:"uppercase",letterSpacing:".08em",marginBottom:10,paddingLeft:4}}>Collections</div>
+            <div style={{background:"#161922",border:"1px solid #2e3247",borderRadius:16,overflow:"hidden",marginBottom:16}}>
+              {COLLECTION_FIELDS.map((f,i,arr)=>(
+                <div key={f.key} style={{display:"flex",alignItems:"center",padding:"13px 20px",borderBottom:i<arr.length-1?"1px solid #1e2130":"none"}}>
+                  <div style={{fontSize:20,width:36}}>{f.icon}</div>
+                  <div style={{flex:1}}><div style={{fontSize:14,color:"#c8cfe0",fontWeight:500}}>{f.label}</div></div>
+                  <div style={{display:"flex",alignItems:"center",gap:4}}>
+                    <span style={{color:"#8891aa",fontSize:16}}>$</span>
+                    <input type="number" min="0" step="0.01" value={values[f.key]||""} onChange={e=>set(f.key,e.target.value)} placeholder="0"
+                      style={{background:"#0f1117",border:`1px solid ${values[f.key]?"#4f8ef7":"#2e3247"}`,color:f.color,borderRadius:10,padding:"10px 14px",fontSize:17,fontWeight:700,fontFamily:"inherit",width:120,textAlign:"center",outline:"none"}}/>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Collections total */}
+            <div style={{background:"#161922",border:"1px solid #4f8ef7",borderRadius:16,padding:"16px 20px",marginBottom:24,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{color:"#8891aa",fontSize:14}}>Total Collections</span>
+              <span style={{color:"#4f8ef7",fontSize:22,fontWeight:700}}>${collections.toLocaleString("en-US",{minimumFractionDigits:2})}</span>
+            </div>
+
+            {/* Submit */}
+            <button onClick={handleSubmit} disabled={submitting}
+              style={{width:"100%",background:submitting?"#2e3247":"linear-gradient(135deg,#4f8ef7,#a78bfa)",color:"white",border:"none",borderRadius:14,padding:"18px",fontSize:18,fontWeight:700,cursor:submitting?"not-allowed":"pointer",fontFamily:"inherit"}}>
+              {submitting?"Saving...":"✓ Submit Daily Stats"}
+            </button>
+            <p style={{textAlign:"center",color:"#8891aa",fontSize:12,marginTop:12}}>Data saves directly to the practice dashboard</p>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
