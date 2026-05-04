@@ -307,7 +307,12 @@
             })
           }));
 
-          if (!found) { setError(`Could not find ${label} in the schedule. Please enter manually in the main app.`); setSubmitting(false); return; }
+          if (!found) { setError(`Could not find ${label} in the schedule. Date not in 2026 calendar.`); setSubmitting(false); return; }
+
+          // Debug: show what we found before saving
+          const matchedDay = weeks.flatMap(w => w.days).find(d => d.label === label);
+          console.log("Saving day:", label, matchedDay);
+          setError(`DEBUG: Found ${label}, pv=${matchedDay?.pv}, cc=${matchedDay?.cc}, found=${found}, weeks=${weeks.length}`);
 
           await docRef.set({ dailyWeeks: weeks }, { merge: true });
 
