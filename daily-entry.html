@@ -105,10 +105,18 @@
         return m ? parseInt(m[1]) || 0 : 0;
       }
       function getGrossTotal() {
-        // pdf.js text looks like:
-        // "...6,675.00 Net Total 105 4,193.97 2,481.03 6,382.50..."
+        // Strip inventory section before finding gross total
+        // Pattern: services Total ... [INVENTORY SECTION] ... Net Total
+        let cleanText = text;
+        const invIdx = text.search(/SUMMARY OF INVENTORY SALES/i);
+        if (invIdx > -1) {
+          const netIdx = text.search(/Net Total/i);
+          if (netIdx > invIdx) {
+            cleanText = text.substring(0, invIdx) + text.substring(netIdx);
+          }
+        }
         // Gross total is the dollar amount immediately before "Net Total"
-        const m = text.match(/([\d,]+\.\d{2})\s*Net Total/i);
+        const m = cleanText.match(/([\d,]+\.\d{2})\s*Net Total/i);
         if (m) return parseFloat(m[1].replace(/,/g,"")) || 0;
         return 0;
       }
@@ -308,11 +316,6 @@
           }));
 
           if (!found) { setError(`Could not find ${label} in the schedule. Date not in 2026 calendar.`); setSubmitting(false); return; }
-
-          // Debug: show what we found before saving
-          const matchedDay = weeks.flatMap(w => w.days).find(d => d.label === label);
-          console.log("Saving day:", label, matchedDay);
-          setError(`DEBUG: Found ${label}, pv=${matchedDay?.pv}, cc=${matchedDay?.cc}, found=${found}, weeks=${weeks.length}`);
 
           await docRef.set({ dailyWeeks: weeks }, { merge: true });
 
